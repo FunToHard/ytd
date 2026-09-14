@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YTD Link Sender</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- Header -->
+    <header class="header">
+      <div class="brand">
+        <div class="logo">▶</div>
+        <span class="title">YTD Sender</span>
+      </div>
+      <div id="status-pill" class="status-pill offline">
+        <span class="status-dot"></span>
+        <span id="status-text">Connecting...</span>
+      </div>
+    </header>
+
+    <!-- Dependency Alert Banner (visible when yt-dlp or ffmpeg missing) -->
+    <section id="deps-warning" class="card warning-card hidden">
+      <div class="warning-title">⚠️ Dependencies Required</div>
+      <div class="warning-desc">yt-dlp and ffmpeg are needed to download and convert media.</div>
+      <button id="install-deps-btn" class="btn btn-warning btn-block">1-Click Install yt-dlp & ffmpeg</button>
+    </section>
+
+    <!-- Quick Send Section -->
+    <section class="card input-card">
+      <label for="url-input" class="label">Quick Download</label>
+      <div class="input-row">
+        <input 
+          type="text" 
+          id="url-input" 
+          placeholder="Paste YouTube or YT Music link..." 
+          autocomplete="off" 
+          spellcheck="false"
+        />
+        <button id="send-btn" class="btn btn-primary" title="Send to daemon">Send</button>
+      </div>
+      <button id="send-current-tab-btn" class="btn btn-secondary btn-block">
+        Send Current Tab Link
+      </button>
+      <div id="feedback-msg" class="feedback-msg hidden"></div>
+    </section>
+
+    <!-- Paths & Info Section -->
+    <section class="card info-card">
+      <div class="info-row">
+        <span class="info-label">Active Downloads</span>
+        <span id="active-count" class="info-val badge">0</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">🎵 Music (MP3)</span>
+        <span id="music-dir" class="info-val path-val" title="OS Music Folder">Loading...</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">🎬 Video (MP4)</span>
+        <span id="video-dir" class="info-val path-val" title="Configured Video Folder">Loading...</span>
+      </div>
+    </section>
+
+    <!-- Recent History Section -->
+    <section class="card history-card">
+      <div class="history-header">
+        <span class="label">Recent Transfers</span>
+        <button id="clear-history-btn" class="btn-link">Clear</button>
+      </div>
+      <ul id="history-list" class="history-list">
+        <li class="history-empty">No recent downloads</li>
+      </ul>
+    </section>
+
+    <footer class="footer">
+      <span>Desktop Daemon: 127.0.0.1:48123</span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
