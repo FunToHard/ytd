@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+    tags-ignore:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  check-and-test:
+    name: Test & Build Check
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo dependencies
+        uses: swatinem/rust-cache@v2
+
+      - name: Run test suite
+        run: cargo test --verbose
+
+      - name: Build Release Binary
+        run: cargo build --release --locked

@@ -2,9 +2,11 @@
 ; Compiles into a single standalone installer: YTD-Setup.exe
 
 #define MyAppName "YTD"
+#ifndef MyAppVersion
 #define MyAppVersion "1.0.0"
+#endif
 #define MyAppPublisher "YTD Project"
-#define MyAppURL "https://github.com"
+#define MyAppURL "https://github.com/FunToHard/ytd"
 #define MyAppExeName "ytd-daemon.exe"
 
 [Setup]
