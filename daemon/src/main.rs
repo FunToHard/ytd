@@ -86,7 +86,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::time::sleep(Duration::from_secs(10)).await;
 
         let current_ver = env!("CARGO_PKG_VERSION");
-        let options = UpdateOptions::new("FunToHard", "ytd", current_ver);
+        let mut options = UpdateOptions::new("FunToHard", "ytd", current_ver);
+        options.silent_installer_args = vec![
+            "/VERYSILENT".to_string(),
+            "/SUPPRESSMSGBOXES".to_string(),
+            "/FORCECLOSEAPPLICATIONS".to_string(),
+        ];
         let engine = AutoUpdaterEngine::new(options);
 
         let (tx_events, mut rx_events) = tokio::sync::mpsc::channel(10);

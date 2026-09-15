@@ -91,7 +91,7 @@ fn show_toast_interactive<F>(
     action_button: Option<&str>,
     on_activated: Option<F>,
 ) where
-    F: FnMut(Option<String>) -> tauri_winrt_notification::Result<()> + Send + 'static,
+    F: Fn(Option<String>) -> tauri_winrt_notification::Result<()> + Send + 'static,
 {
     let mut toast = Toast::new(AUMID)
         .title(title)

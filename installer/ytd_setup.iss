@@ -3,7 +3,7 @@
 
 #define MyAppName "YTD"
 #ifndef MyAppVersion
-#define MyAppVersion "1.0.3"
+#define MyAppVersion "1.0.4"
 #endif
 #define MyAppPublisher "YTD Project"
 #define MyAppURL "https://github.com/FunToHard/ytd"
@@ -27,6 +27,8 @@ PrivilegesRequired=lowest
 OutputDir=..\target\installer
 SetupIconFile=..\daemon\resources\app-icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
+CloseApplications=force
+RestartApplications=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -50,4 +52,26 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFile
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\app-icon.ico"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall
+
+[Code]
+// Terminate running ytd-daemon.exe instances before updating files
+procedure KillRunningApp();
+var
+  ResultCode: Integer;
+begin
+  Exec('taskkill.exe', '/F /IM ytd-daemon.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(300);
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  KillRunningApp();
+  Result := True;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  KillRunningApp();
+  Result := '';
+end;

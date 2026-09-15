@@ -144,7 +144,12 @@ pub fn run_tray(
                             rt.block_on(async {
                                 use github_auto_updater::{AutoUpdaterEngine, UpdateOptions};
                                 let current_ver = env!("CARGO_PKG_VERSION");
-                                let options = UpdateOptions::new("FunToHard", "ytd", current_ver);
+                                let mut options = UpdateOptions::new("FunToHard", "ytd", current_ver);
+                                options.silent_installer_args = vec![
+                                    "/VERYSILENT".to_string(),
+                                    "/SUPPRESSMSGBOXES".to_string(),
+                                    "/FORCECLOSEAPPLICATIONS".to_string(),
+                                ];
                                 let engine = AutoUpdaterEngine::new(options);
 
                                 crate::notifier::notify_info("YTD Updater", "Checking for updates...");
@@ -168,9 +173,13 @@ pub fn run_tray(
                                             match engine.download_update(&release, None).await {
                                                 Ok(update_file) => {
                                                     crate::notifier::notify_info("YTD Updater", "Applying update and restarting...");
+                                                    std::thread::sleep(std::time::Duration::from_millis(500));
                                                     if let Err(e) = engine.apply_update(&update_file) {
                                                         error!("Failed to apply update: {}", e);
                                                         crate::notifier::notify_info("YTD Updater Error", &format!("Failed to apply update: {}", e));
+                                                    } else {
+                                                        info!("Update installer spawned. Exiting current process to release file lock.");
+                                                        std::process::exit(0);
                                                     }
                                                 }
                                                 Err(e) => {
