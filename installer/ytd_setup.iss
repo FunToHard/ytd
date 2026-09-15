@@ -3,7 +3,7 @@
 
 #define MyAppName "YTD"
 #ifndef MyAppVersion
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.2"
 #endif
 #define MyAppPublisher "YTD Project"
 #define MyAppURL "https://github.com/FunToHard/ytd"

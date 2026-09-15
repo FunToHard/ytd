@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use tracing::{error, info, warn};
-use winrt_notification::{Duration, IconCrop, Toast};
+use tauri_winrt_notification::{Duration, IconCrop, Toast};
 
 pub const AUMID: &str = "YTD";
 
@@ -83,7 +83,16 @@ pub fn init_app_identity() {
     info!("Initialized YTD application identity for Windows Toast notifications");
 }
 
-fn show_toast(title: &str, text1: &str, text2: Option<&str>, duration: Duration) {
+fn show_toast_interactive<F>(
+    title: &str,
+    text1: &str,
+    text2: Option<&str>,
+    duration: Duration,
+    action_button: Option<&str>,
+    on_activated: Option<F>,
+) where
+    F: FnMut(Option<String>) -> tauri_winrt_notification::Result<()> + Send + 'static,
+{
     let mut toast = Toast::new(AUMID)
         .title(title)
         .text1(text1)
@@ -91,6 +100,14 @@ fn show_toast(title: &str, text1: &str, text2: Option<&str>, duration: Duration)
 
     if let Some(t2) = text2 {
         toast = toast.text2(t2);
+    }
+
+    if let Some(btn) = action_button {
+        toast = toast.add_button(btn, "open_folder");
+    }
+
+    if let Some(handler) = on_activated {
+        toast = toast.on_activated(handler);
     }
 
     if let Some(icon_path) = ICON_PATH.get() {
@@ -113,6 +130,10 @@ fn show_toast(title: &str, text1: &str, text2: Option<&str>, duration: Duration)
             fallback = fallback.text2(t2);
         }
 
+        if let Some(btn) = action_button {
+            fallback = fallback.add_button(btn, "open_folder");
+        }
+
         if let Some(icon_path) = ICON_PATH.get() {
             if icon_path.exists() {
                 fallback = fallback.icon(icon_path, IconCrop::Square, "YTD");
@@ -123,6 +144,12 @@ fn show_toast(title: &str, text1: &str, text2: Option<&str>, duration: Duration)
             error!("Fallback toast also failed: {:?}", err);
         }
     }
+}
+
+fn show_toast(title: &str, text1: &str, text2: Option<&str>, duration: Duration) {
+    show_toast_interactive::<fn(Option<String>) -> tauri_winrt_notification::Result<()>>(
+        title, text1, text2, duration, None, None,
+    );
 }
 
 pub fn notify_download_started(title: &str, is_music: bool) {
@@ -139,11 +166,30 @@ pub fn notify_download_started(title: &str, is_music: bool) {
 pub fn notify_download_completed(title: &str, destination: &str, is_music: bool) {
     let category = if is_music { "MP3 Audio" } else { "MP4 Video" };
     info!("Notification: Download completed - [{}] {} -> {}", category, title, destination);
-    show_toast(
+
+    let path = std::path::PathBuf::from(destination);
+    let target_folder = if path.is_file() {
+        path.parent().map(|p| p.to_path_buf()).unwrap_or(path)
+    } else {
+        path
+    };
+
+    let folder_to_open = target_folder.clone();
+    let folder_display = target_folder.to_string_lossy().to_string();
+
+    show_toast_interactive(
         &format!("YTD: Download Finished ({})", category),
         title,
-        Some(&format!("Saved to: {}", destination)),
+        Some(&format!("Saved to: {} (click to open)", folder_display)),
         Duration::Short,
+        Some("Open Folder"),
+        Some(move |_action| {
+            info!("Notification clicked: opening folder {}", folder_to_open.display());
+            if let Err(e) = open::that(&folder_to_open) {
+                error!("Failed to open folder {}: {}", folder_to_open.display(), e);
+            }
+            Ok(())
+        }),
     );
 }
 

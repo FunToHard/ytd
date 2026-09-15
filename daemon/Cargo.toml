@@ -1,6 +1,6 @@
 [package]
 name = "ytd-daemon"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 
 [dependencies]
@@ -13,7 +13,7 @@ url = "2.5"
 dirs = "5.0"
 rfd = "0.15"
 tray-icon = "0.25"
-winrt-notification = "0.5"
+tauri-winrt-notification = "0.7"
 open = "5.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
