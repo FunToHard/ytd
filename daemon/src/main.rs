@@ -74,6 +74,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    // Spawn Background Auto-Update Check
+    rt.spawn(async {
+        use github_auto_updater::{AutoUpdaterEngine, UpdateOptions};
+        use std::time::Duration;
+
+        // Wait 10 seconds after startup before initial background check
+        tokio::time::sleep(Duration::from_secs(10)).await;
+
+        let current_ver = env!("CARGO_PKG_VERSION");
+        let options = UpdateOptions::new("FunToHard", "ytd", current_ver);
+        let engine = AutoUpdaterEngine::new(options);
+
+        let (tx_events, mut rx_events) = tokio::sync::mpsc::channel(10);
+        engine.start_background_check(Duration::from_secs(24 * 3600), tx_events);
+
+        while let Some(event) = rx_events.recv().await {
+            if let github_auto_updater::UpdateEvent::UpdateAvailable(release) = event {
+                notifier::notify_update_available(&release.tag_name);
+            }
+        }
+    });
+
     // Run system tray on the main thread
     let tray_config = config.clone();
     let tray_thread = std::thread::spawn(move || {

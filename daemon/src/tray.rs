@@ -24,6 +24,7 @@ pub fn run_tray(
         MenuItem::new("✓ Dependencies: Ready", false, None)
     };
     let item_install_ext = MenuItem::new("Install Browser Extension...", true, None);
+    let item_update = MenuItem::new("Check for Updates...", true, None);
 
     let item_music = MenuItem::new("Open Music Folder", true, None);
     let item_video = MenuItem::new("Open Video Folder", true, None);
@@ -41,6 +42,7 @@ pub fn run_tray(
     menu.append(&PredefinedMenuItem::separator())?;
     menu.append(&item_deps)?;
     menu.append(&item_install_ext)?;
+    menu.append(&item_update)?;
     menu.append(&PredefinedMenuItem::separator())?;
     menu.append(&item_music)?;
     menu.append(&item_video)?;
@@ -105,6 +107,60 @@ pub fn run_tray(
                     }
                 } else if event.id == item_install_ext.id() {
                     crate::deps::open_extension_helper();
+                } else if event.id == item_update.id() {
+                    std::thread::spawn(|| {
+                        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build();
+                        if let Ok(rt) = rt {
+                            rt.block_on(async {
+                                use github_auto_updater::{AutoUpdaterEngine, UpdateOptions};
+                                let current_ver = env!("CARGO_PKG_VERSION");
+                                let options = UpdateOptions::new("FunToHard", "ytd", current_ver);
+                                let engine = AutoUpdaterEngine::new(options);
+
+                                crate::notifier::notify_info("YTD Updater", "Checking for updates...");
+                                match engine.check_for_updates().await {
+                                    Ok(Some(release)) => {
+                                        let tag = &release.tag_name;
+                                        let notes = release.body.as_deref().unwrap_or("No release notes provided.");
+                                        let prompt = format!(
+                                            "A new version of YTD ({}) is available!\n\nRelease Notes:\n{}\n\nWould you like to download and install this update now?",
+                                            tag, notes
+                                        );
+
+                                        let answer = rfd::MessageDialog::new()
+                                            .set_title("YTD - Update Available")
+                                            .set_description(&prompt)
+                                            .set_buttons(rfd::MessageButtons::YesNo)
+                                            .show();
+
+                                        if answer == rfd::MessageDialogResult::Yes {
+                                            crate::notifier::notify_info("YTD Updater", &format!("Downloading {} update...", tag));
+                                            match engine.download_update(&release, None).await {
+                                                Ok(update_file) => {
+                                                    crate::notifier::notify_info("YTD Updater", "Applying update and restarting...");
+                                                    if let Err(e) = engine.apply_update(&update_file) {
+                                                        error!("Failed to apply update: {}", e);
+                                                        crate::notifier::notify_info("YTD Updater Error", &format!("Failed to apply update: {}", e));
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    error!("Failed to download update: {}", e);
+                                                    crate::notifier::notify_info("YTD Updater Error", &format!("Download failed: {}", e));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Ok(None) => {
+                                        crate::notifier::notify_info("YTD Updater", &format!("YTD is up to date (version v{}).", current_ver));
+                                    }
+                                    Err(e) => {
+                                        error!("Update check failed: {}", e);
+                                        crate::notifier::notify_info("YTD Updater", &format!("Update check failed: {}", e));
+                                    }
+                                }
+                            });
+                        }
+                    });
                 } else if event.id == item_music.id() {
                     let path = {
                         let cfg = config.read().unwrap();

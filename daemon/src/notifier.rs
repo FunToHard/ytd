@@ -165,3 +165,22 @@ pub fn notify_setup_required() {
         Duration::Long,
     );
 }
+
+pub fn notify_info(title: &str, message: &str) {
+    show_toast(
+        title,
+        message,
+        None,
+        Duration::Short,
+    );
+}
+
+pub fn notify_update_available(version: &str) {
+    show_toast(
+        "YTD: Update Available",
+        &format!("Version {} is available to install.", version),
+        Some("Right-click the YTD tray icon to install."),
+        Duration::Long,
+    );
+}
+
