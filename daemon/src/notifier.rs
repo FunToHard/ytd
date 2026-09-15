@@ -206,7 +206,7 @@ pub fn notify_download_failed(title: &str, err: &str) {
 pub fn notify_setup_required() {
     show_toast(
         "YTD: Setup Required",
-        "yt-dlp or ffmpeg not detected.",
+        "yt-dlp, ffmpeg, or Deno not detected.",
         Some("Right-click the YTD tray icon to install with 1 click."),
         Duration::Long,
     );

@@ -72,6 +72,7 @@ pub async fn run_server(config: SharedConfig) -> Result<(), Box<dyn std::error::
         .route("/download", post(download_handler))
         .route("/dependencies/status", get(deps_status_handler))
         .route("/dependencies/install", post(deps_install_handler))
+        .route("/dependencies/update", post(deps_update_handler))
         .route("/helper/open-extension", post(open_extension_handler))
         .layer(CorsLayer::permissive())
         .with_state(state);
@@ -176,7 +177,7 @@ async fn deps_install_handler() -> impl IntoResponse {
             crate::notifier::notify_download_failed("Dependency Setup", &e);
         } else {
             crate::notifier::notify_download_completed(
-                "yt-dlp & ffmpeg ready",
+                "yt-dlp, ffmpeg & Deno ready",
                 &crate::deps::get_bin_dir().to_string_lossy(),
                 false,
             );
@@ -191,6 +192,27 @@ async fn deps_install_handler() -> impl IntoResponse {
             error: None,
         }),
     )
+}
+
+async fn deps_update_handler() -> impl IntoResponse {
+    match crate::deps::update_dependencies().await {
+        Ok(result) => (
+            StatusCode::OK,
+            Json(ApiResponse {
+                success: true,
+                data: Some(result),
+                error: None,
+            }),
+        ),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse {
+                success: false,
+                data: None,
+                error: Some(err),
+            }),
+        ),
+    }
 }
 
 async fn open_extension_handler() -> impl IntoResponse {

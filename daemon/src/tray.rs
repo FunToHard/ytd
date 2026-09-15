@@ -19,12 +19,13 @@ pub fn run_tray(
 
     let dep_status = crate::deps::check_dependencies();
     let item_deps = if !dep_status.all_ready {
-        MenuItem::new("⚠️ Install Dependencies (yt-dlp & ffmpeg)...", true, None)
+        MenuItem::new("⚠️ Install Dependencies (yt-dlp, ffmpeg & Deno)...", true, None)
     } else {
         MenuItem::new("✓ Dependencies: Ready", false, None)
     };
+    let item_update_deps = MenuItem::new("Update Download Tools (yt-dlp & Deno)...", true, None);
     let item_install_ext = MenuItem::new("Install Browser Extension...", true, None);
-    let item_update = MenuItem::new("Check for Updates...", true, None);
+    let item_update = MenuItem::new("Check for App Updates...", true, None);
 
     let item_music = MenuItem::new("Open Music Folder", true, None);
     let item_video = MenuItem::new("Open Video Folder", true, None);
@@ -41,6 +42,7 @@ pub fn run_tray(
     menu.append(&item_status)?;
     menu.append(&PredefinedMenuItem::separator())?;
     menu.append(&item_deps)?;
+    menu.append(&item_update_deps)?;
     menu.append(&item_install_ext)?;
     menu.append(&item_update)?;
     menu.append(&PredefinedMenuItem::separator())?;
@@ -80,13 +82,13 @@ pub fn run_tray(
                         let res = rfd::MessageDialog::new()
                             .set_title("YTD - Dependency Setup")
                             .set_description(
-                                "YTD needs yt-dlp and ffmpeg to download and convert videos.\n\nWould you like YTD to automatically download and configure them into %APPDATA%\\ytd\\bin?"
+                                "YTD needs yt-dlp, ffmpeg, and Deno (JavaScript runtime) to download and convert videos without YouTube throttling.\n\nWould you like YTD to automatically download and configure them into %APPDATA%\\ytd\\bin?"
                             )
                             .set_buttons(rfd::MessageButtons::YesNo)
                             .show();
 
                         if res == rfd::MessageDialogResult::Yes {
-                            crate::notifier::notify_download_started("yt-dlp & ffmpeg setup started...", false);
+                            crate::notifier::notify_download_started("yt-dlp, ffmpeg & Deno setup started...", false);
                             std::thread::spawn(|| {
                                 let rt = tokio::runtime::Builder::new_current_thread().enable_all().build();
                                 if let Ok(rt) = rt {
@@ -95,7 +97,7 @@ pub fn run_tray(
                                             crate::notifier::notify_download_failed("Dependency Setup", &e);
                                         } else {
                                             crate::notifier::notify_download_completed(
-                                                "yt-dlp & ffmpeg ready",
+                                                "yt-dlp, ffmpeg & Deno ready",
                                                 &crate::deps::get_bin_dir().to_string_lossy(),
                                                 false,
                                             );
@@ -105,6 +107,34 @@ pub fn run_tray(
                             });
                         }
                     }
+                } else if event.id == item_update_deps.id() {
+                    std::thread::spawn(|| {
+                        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build();
+                        if let Ok(rt) = rt {
+                            rt.block_on(async {
+                                crate::notifier::notify_info("YTD Tools Updater", "Checking for yt-dlp and Deno updates...");
+                                match crate::deps::update_dependencies().await {
+                                    Ok(res) => {
+                                        if res.ytdlp_updated || res.deno_updated {
+                                            let mut msg = Vec::new();
+                                            if res.ytdlp_updated {
+                                                msg.push(format!("yt-dlp: {}", res.ytdlp_message));
+                                            }
+                                            if res.deno_updated {
+                                                msg.push(format!("Deno: {}", res.deno_message));
+                                            }
+                                            crate::notifier::notify_info("YTD Tools Updated", &msg.join(", "));
+                                        } else {
+                                            crate::notifier::notify_info("YTD Tools", "Download tools (yt-dlp & Deno) are already up to date.");
+                                        }
+                                    }
+                                    Err(e) => {
+                                        crate::notifier::notify_info("YTD Tools Update Error", &format!("Update failed: {}", e));
+                                    }
+                                }
+                            });
+                        }
+                    });
                 } else if event.id == item_install_ext.id() {
                     crate::deps::open_extension_helper();
                 } else if event.id == item_update.id() {

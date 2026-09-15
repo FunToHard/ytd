@@ -50,12 +50,14 @@ flowchart LR
 - The daemon downloads standard YouTube links as MP4 video files.
 - The daemon saves video files in the configured video folder.
 
-### Zero-CLI Dependency Setup
-- The daemon detects missing `yt-dlp` and `ffmpeg` binaries automatically.
-- Users can install required binaries through a one-click dialog.
+### Zero-CLI Dependency Setup & Automatic Updates
+- The daemon detects missing `yt-dlp`, `ffmpeg`, and `deno` binaries automatically.
+- Deno executes JavaScript player challenges to prevent YouTube signature errors and bandwidth throttling.
+- Users can install all required binaries through a one-click dialog.
 - The daemon downloads binaries directly into `%APPDATA%\ytd\bin\`.
-- The daemon configures its internal process search path automatically.
-- Users do not need to configure system environment variables.
+- The daemon configures its internal process search path automatically without modifying global Windows environment variables.
+- The daemon checks for and applies `yt-dlp` and `deno` updates automatically every 24 hours.
+- Users can manually trigger dependency updates at any time from the notification area menu.
 
 ### Desktop Integration
 - The daemon displays an icon in the Windows notification area.
@@ -81,7 +83,7 @@ flowchart LR
 1. Download the latest release from the Releases page.
 2. Run `ytd-daemon.exe`.
 3. The daemon initializes an icon in the Windows notification area.
-4. If prompted, click **Yes** to install `yt-dlp` and `ffmpeg` automatically.
+4. If prompted, click **Yes** to install `yt-dlp`, `ffmpeg`, and `deno` automatically.
 
 ### 2. Install the Browser Extension
 

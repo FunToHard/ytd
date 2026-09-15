@@ -33,10 +33,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Check dependency health on startup
     let dep_status = deps::check_dependencies();
     if !dep_status.all_ready {
-        info!("Dependencies missing: yt-dlp={}, ffmpeg={}", dep_status.ytdlp_available, dep_status.ffmpeg_available);
+        info!(
+            "Dependencies missing: yt-dlp={}, ffmpeg={}, deno={}",
+            dep_status.ytdlp_available, dep_status.ffmpeg_available, dep_status.deno_available
+        );
         notifier::notify_setup_required();
     } else {
-        info!("All dependencies verified (yt-dlp & ffmpeg ready)");
+        info!("All dependencies verified (yt-dlp, ffmpeg & Deno ready)");
     }
 
     let config = init_shared_config();
@@ -93,6 +96,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let github_auto_updater::UpdateEvent::UpdateAvailable(release) = event {
                 notifier::notify_update_available(&release.tag_name);
             }
+        }
+    });
+
+    // Spawn Background Dependency Auto-Update Check
+    rt.spawn(async {
+        use std::time::Duration;
+
+        // Wait 60 seconds after startup before initial dependency update check
+        tokio::time::sleep(Duration::from_secs(60)).await;
+
+        loop {
+            info!("Running periodic dependency update check...");
+            match deps::update_dependencies().await {
+                Ok(res) => {
+                    if res.ytdlp_updated || res.deno_updated {
+                        let mut msg = Vec::new();
+                        if res.ytdlp_updated {
+                            msg.push(format!("yt-dlp: {}", res.ytdlp_message));
+                        }
+                        if res.deno_updated {
+                            msg.push(format!("Deno: {}", res.deno_message));
+                        }
+                        notifier::notify_info("YTD: Tools Updated", &msg.join(", "));
+                    } else {
+                        info!("Dependencies are already up to date");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Periodic dependency update check error: {}", e);
+                }
+            }
+
+            // Check once every 24 hours
+            tokio::time::sleep(Duration::from_secs(24 * 3600)).await;
         }
     });
 

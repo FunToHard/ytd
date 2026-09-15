@@ -22,7 +22,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // 1-Click install dependencies handler
   installDepsBtn.addEventListener("click", async () => {
     installDepsBtn.disabled = true;
-    installDepsBtn.textContent = "Installing yt-dlp & ffmpeg...";
+    installDepsBtn.textContent = "Installing yt-dlp, ffmpeg & Deno...";
     showFeedback("Downloading dependencies in background...", true);
 
     try {
@@ -31,7 +31,7 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (e) {
       showFeedback("Failed to trigger installation: " + e.message, false);
       installDepsBtn.disabled = false;
-      installDepsBtn.textContent = "1-Click Install yt-dlp & ffmpeg";
+      installDepsBtn.textContent = "1-Click Install yt-dlp, ffmpeg & Deno";
     }
   });
 
@@ -44,14 +44,14 @@ document.addEventListener("DOMContentLoaded", () => {
           const json = await res.json();
           if (json.data && json.data.all_ready) {
             depsWarning.classList.add("hidden");
-            showFeedback("yt-dlp and ffmpeg are ready!", true);
+            showFeedback("yt-dlp, ffmpeg, and Deno are ready!", true);
             return;
           }
         }
       } catch (e) {}
     }
     installDepsBtn.disabled = false;
-    installDepsBtn.textContent = "1-Click Install yt-dlp & ffmpeg";
+    installDepsBtn.textContent = "1-Click Install yt-dlp, ffmpeg & Deno";
   }
 
   // Send input URL
