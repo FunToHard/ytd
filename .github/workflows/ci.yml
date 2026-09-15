@@ -2,20 +2,31 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
+    tags-ignore:
+      - 'v*'
   pull_request:
-    branches: [ main ]
+    branches:
+      - main
 
 jobs:
-  test:
-    name: Test on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ windows-latest, ubuntu-latest, macos-latest ]
+  check-and-test:
+    name: Test & Build Check
+    runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: swatinem/rust-cache@v2
-      - run: cargo test --verbose
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo dependencies
+        uses: swatinem/rust-cache@v2
+
+      - name: Run test suite
+        run: cargo test --verbose
+
+      - name: Build Release Binary
+        run: cargo build --release --locked

@@ -902,6 +902,7 @@ dependencies = [
 [[package]]
 name = "github-auto-updater"
 version = "0.1.0"
+source = "git+https://github.com/FunToHard/github-auto-updater-rs.git?branch=main#84d85c18d4b4d0be3255b65aae023b4fbcb12251"
 dependencies = [
  "futures-util",
  "hex",
@@ -911,7 +912,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "tempfile",
  "tokio",
  "tracing",
 ]
