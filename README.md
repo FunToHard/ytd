@@ -1,5 +1,12 @@
 # YTD: YouTube and YouTube Music Downloader
 
+[![GitHub Release](https://img.shields.io/github/v/release/FunToHard/ytd?style=flat-square&logo=github&color=blue)](https://github.com/FunToHard/ytd/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/FunToHard/ytd/ci.yml?branch=main&style=flat-square&logo=github-actions&label=CI)](https://github.com/FunToHard/ytd/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/actions/workflow/status/FunToHard/ytd/release.yml?style=flat-square&logo=github-actions&label=Release)](https://github.com/FunToHard/ytd/actions/workflows/release.yml)
+[![Downloads](https://img.shields.io/github/downloads/FunToHard/ytd/latest/total?style=flat-square&logo=github&color=green)](https://github.com/FunToHard/ytd/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6?style=flat-square&logo=windows)](https://github.com/FunToHard/ytd/releases/latest)
+[![Rust Edition](https://img.shields.io/badge/rust-2021%20edition-DEA584?style=flat-square&logo=rust)](https://www.rust-lang.org/)
+
 YTD downloads YouTube videos and YouTube Music tracks directly from your web browser. The system contains two components: a Rust desktop daemon and a browser extension.
 
 ---
