@@ -1,6 +1,6 @@
 [package]
 name = "ytd-daemon"
-version = "1.0.4"
+version = "1.0.5"
 edition = "2021"
 
 [dependencies]
@@ -17,7 +17,7 @@ tauri-winrt-notification = "0.8.1"
 open = "5.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-windows-sys = { version = "0.61.2", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }
+windows-sys = { version = "0.61.2", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_System_Registry"] }
 github-auto-updater = { git = "https://github.com/FunToHard/github-auto-updater-rs.git", branch = "main" }
 
 [build-dependencies]

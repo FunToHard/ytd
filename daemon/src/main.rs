@@ -48,6 +48,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Audio Download Dir: {:?}", cfg.audio_download_dir);
         info!("Video Download Dir: {:?}", cfg.video_download_dir);
         info!("Listening Port: {}", cfg.port);
+        info!("Auto Start Enabled: {}", cfg.auto_start);
+
+        // Synchronize auto-startup setting with Windows registry on boot
+        config::cleanup_legacy_corrupted_keys();
+        if cfg.auto_start {
+            if let Err(e) = config::set_auto_start_registry(true) {
+                tracing::warn!("Failed to synchronize auto startup in registry: {}", e);
+            }
+        }
     }
 
     let (tx_exit, mut rx_exit) = broadcast::channel::<()>(2);

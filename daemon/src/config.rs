@@ -82,37 +82,153 @@ impl Config {
 
     pub fn update_auto_start(&mut self, enable: bool) {
         self.auto_start = enable;
-        set_auto_start_registry(enable);
+        if let Err(e) = set_auto_start_registry(enable) {
+            tracing::error!("Failed to update auto start in registry: {}", e);
+        }
         self.save();
     }
 }
 
-pub fn set_auto_start_registry(enable: bool) {
+#[cfg(windows)]
+pub(crate) fn to_wide(s: &str) -> Vec<u16> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+}
+
+pub fn set_auto_start_registry(enable: bool) -> Result<(), String> {
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        let run_key = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+        use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+        use windows_sys::Win32::System::Registry::{
+            RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegSetValueExW,
+            HKEY_CURRENT_USER, KEY_SET_VALUE, REG_SZ,
+        };
 
-        if enable {
-            if let Ok(exe) = std::env::current_exe() {
-                let exe_str = exe.to_string_lossy().to_string();
-                let cmd_str = format!(
-                    "reg add \"{}\" /v \"YTD\" /t REG_SZ /d \"\\\"{}\\\"\" /f",
-                    run_key, exe_str
-                );
-                let mut cmd = std::process::Command::new("cmd");
-                cmd.creation_flags(CREATE_NO_WINDOW);
-                cmd.arg("/C").arg(cmd_str);
-                let _ = cmd.output();
+        let subkey = to_wide(r"Software\Microsoft\Windows\CurrentVersion\Run");
+        let val_name = to_wide("YTD");
+
+        let mut hkey = std::ptr::null_mut();
+        let status = unsafe {
+            RegOpenKeyExW(
+                HKEY_CURRENT_USER,
+                subkey.as_ptr(),
+                0,
+                KEY_SET_VALUE,
+                &mut hkey,
+            )
+        };
+
+        if status != ERROR_SUCCESS {
+            return Err(format!("Failed to open Run registry key: error code {}", status));
+        }
+
+        let result = if enable {
+            match std::env::current_exe() {
+                Ok(exe) => {
+                    let exe_str = format!("\"{}\"", exe.display());
+                    let wide_data = to_wide(&exe_str);
+                    let byte_len = (wide_data.len() * std::mem::size_of::<u16>()) as u32;
+
+                    let set_status = unsafe {
+                        RegSetValueExW(
+                            hkey,
+                            val_name.as_ptr(),
+                            0,
+                            REG_SZ,
+                            wide_data.as_ptr() as *const u8,
+                            byte_len,
+                        )
+                    };
+                    if set_status == ERROR_SUCCESS {
+                        tracing::info!("Registered YTD auto-start in registry: {}", exe_str);
+                        Ok(())
+                    } else {
+                        let err_msg = format!("RegSetValueExW failed: error code {}", set_status);
+                        tracing::error!("{}", err_msg);
+                        Err(err_msg)
+                    }
+                }
+                Err(e) => {
+                    let err_msg = format!("Failed to determine current executable path: {}", e);
+                    tracing::error!("{}", err_msg);
+                    Err(err_msg)
+                }
             }
         } else {
-            let cmd_str = format!("reg delete \"{}\" /v \"YTD\" /f", run_key);
-            let mut cmd = std::process::Command::new("cmd");
-            cmd.creation_flags(CREATE_NO_WINDOW);
-            cmd.arg("/C").arg(cmd_str);
-            let _ = cmd.output();
+            let del_status = unsafe { RegDeleteValueW(hkey, val_name.as_ptr()) };
+            if del_status == ERROR_SUCCESS {
+                tracing::info!("Unregistered YTD auto-start from registry");
+                Ok(())
+            } else {
+                Ok(())
+            }
+        };
+
+        unsafe { RegCloseKey(hkey) };
+        cleanup_legacy_corrupted_keys();
+        result
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = enable;
+        Ok(())
+    }
+}
+
+pub fn is_auto_start_registered() -> bool {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+        use windows_sys::Win32::System::Registry::{
+            RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_CURRENT_USER, KEY_QUERY_VALUE,
+        };
+
+        let subkey = to_wide(r"Software\Microsoft\Windows\CurrentVersion\Run");
+        let val_name = to_wide("YTD");
+        let mut hkey = std::ptr::null_mut();
+
+        let status = unsafe {
+            RegOpenKeyExW(
+                HKEY_CURRENT_USER,
+                subkey.as_ptr(),
+                0,
+                KEY_QUERY_VALUE,
+                &mut hkey,
+            )
+        };
+
+        if status != ERROR_SUCCESS {
+            return false;
         }
+
+        let query_status = unsafe {
+            RegQueryValueExW(
+                hkey,
+                val_name.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+
+        unsafe { RegCloseKey(hkey) };
+        query_status == ERROR_SUCCESS
+    }
+    #[cfg(not(windows))]
+    false
+}
+
+pub fn cleanup_legacy_corrupted_keys() {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Registry::{RegDeleteKeyW, HKEY_CURRENT_USER};
+        let corrupt_run = to_wide("Software\\Microsoft\\Windows\\CurrentVersion\\Run\"");
+        unsafe { RegDeleteKeyW(HKEY_CURRENT_USER, corrupt_run.as_ptr()) };
+
+        let corrupt_aumid = to_wide("Software\\Classes\\AppUserModelId\\YTD\"");
+        unsafe { RegDeleteKeyW(HKEY_CURRENT_USER, corrupt_aumid.as_ptr()) };
     }
 }
 
@@ -134,5 +250,16 @@ mod tests {
         assert!(!config.auto_start);
         assert!(!config.video_download_dir.as_os_str().is_empty());
         assert!(!config.audio_download_dir.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn test_auto_start_win32_api() {
+        let res = set_auto_start_registry(true);
+        assert!(res.is_ok(), "Failed to set auto-start: {:?}", res);
+        assert!(is_auto_start_registered(), "Expected auto-start to be registered");
+
+        let res = set_auto_start_registry(false);
+        assert!(res.is_ok(), "Failed to unset auto-start: {:?}", res);
+        assert!(!is_auto_start_registered(), "Expected auto-start to be unregistered");
     }
 }

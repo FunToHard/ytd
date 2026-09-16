@@ -28,31 +28,64 @@ pub fn init_app_identity() {
 
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+        use windows_sys::Win32::System::Registry::{
+            RegCloseKey, RegCreateKeyExW, RegDeleteKeyW, RegSetValueExW,
+            HKEY_CURRENT_USER, KEY_WRITE, REG_OPTION_RESERVED, REG_SZ,
+        };
 
         // Register AppUserModelId in HKCU\Software\Classes\AppUserModelId\YTD
-        let commands = [
-            format!(
-                "reg add \"HKCU\\Software\\Classes\\AppUserModelId\\{}\" /v DisplayName /t REG_SZ /d \"YTD\" /f",
-                AUMID
-            ),
-            format!(
-                "reg add \"HKCU\\Software\\Classes\\AppUserModelId\\{}\" /v IconUri /t REG_SZ /d \"{}\" /f",
-                AUMID, icon_path_str
-            ),
-            format!(
-                "reg add \"HKCU\\Software\\Classes\\AppUserModelId\\{}\" /v IconBackgroundColor /t REG_SZ /d \"0\" /f",
-                AUMID
-            ),
-        ];
+        let subkey = crate::config::to_wide(&format!(r"Software\Classes\AppUserModelId\{}", AUMID));
+        let mut hkey = std::ptr::null_mut();
 
-        for cmd_str in &commands {
-            let mut cmd = std::process::Command::new("cmd");
-            cmd.creation_flags(CREATE_NO_WINDOW);
-            cmd.arg("/C").arg(cmd_str);
-            let _ = cmd.output();
+        let status = unsafe {
+            RegCreateKeyExW(
+                HKEY_CURRENT_USER,
+                subkey.as_ptr(),
+                0,
+                std::ptr::null(),
+                REG_OPTION_RESERVED,
+                KEY_WRITE,
+                std::ptr::null(),
+                &mut hkey,
+                std::ptr::null_mut(),
+            )
+        };
+
+        if status == ERROR_SUCCESS {
+            let entries = [
+                ("DisplayName", "YTD"),
+                ("IconUri", &icon_path_str),
+                ("IconBackgroundColor", "0"),
+            ];
+
+            for (name, val) in entries {
+                let wide_name = crate::config::to_wide(name);
+                let wide_val = crate::config::to_wide(val);
+                let byte_len = (wide_val.len() * std::mem::size_of::<u16>()) as u32;
+
+                unsafe {
+                    RegSetValueExW(
+                        hkey,
+                        wide_name.as_ptr(),
+                        0,
+                        REG_SZ,
+                        wide_val.as_ptr() as *const u8,
+                        byte_len,
+                    );
+                }
+            }
+            unsafe { RegCloseKey(hkey) };
+        } else {
+            tracing::warn!("Failed to create AppUserModelId registry key: error code {}", status);
         }
+
+        // Clean up legacy corrupted AppUserModelId\YTD" key if present
+        let corrupt_key = crate::config::to_wide(&format!("Software\\Classes\\AppUserModelId\\{}\"", AUMID));
+        unsafe { RegDeleteKeyW(HKEY_CURRENT_USER, corrupt_key.as_ptr()) };
+
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
 
         // Create Start Menu shortcut so Windows 10/11 Action Center resolves the application icon & name
         if let Some(programs_dir) = dirs::data_dir().map(|d| {

@@ -33,7 +33,7 @@ pub fn run_tray(
 
     let initial_startup = {
         let cfg = config.read().unwrap();
-        cfg.auto_start
+        cfg.auto_start || crate::config::is_auto_start_registered()
     };
     let item_startup = CheckMenuItem::new("Run at Startup", true, initial_startup, None);
 

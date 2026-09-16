@@ -3,7 +3,7 @@
 
 #define MyAppName "YTD"
 #ifndef MyAppVersion
-#define MyAppVersion "1.0.4"
+#define MyAppVersion "1.0.5"
 #endif
 #define MyAppPublisher "YTD Project"
 #define MyAppURL "https://github.com/FunToHard/ytd"
@@ -36,6 +36,16 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "startmenuicon"; Description: "Create a Start Menu shortcut"; GroupDescription: "{cm:AdditionalIcons}"
+Name: "autostart"; Description: "Start YTD automatically when Windows starts"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+
+[Registry]
+; Auto-start task integration
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "YTD"; ValueData: """{app}\{#MyAppExeName}"""; Flags: uninsdeletevalue; Tasks: autostart
+; Clean up YTD auto-start entry on uninstall even if enabled via tray menu
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: "YTD"; Flags: dontcreatekey uninsdeletevalue
+; Clean up legacy corrupted keys created by prior builds
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"""; Flags: dontcreatekey uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\AppUserModelId\YTD"""; Flags: dontcreatekey uninsdeletekey
 
 [Files]
 ; Main Executable
