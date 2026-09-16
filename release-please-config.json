@@ -1,13 +1,17 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "packages": {
-    "daemon": {
+    ".": {
       "package-name": "ytd",
-      "release-type": "rust",
+      "release-type": "simple",
       "include-component-in-tag": false,
-      "tag-separator": "",
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
+        {
+          "type": "toml",
+          "path": "daemon/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
         {
           "type": "json",
           "path": "extension/manifest.json",
