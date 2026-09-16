@@ -101,26 +101,46 @@ pub fn set_auto_start_registry(enable: bool) -> Result<(), String> {
     {
         use windows_sys::Win32::Foundation::ERROR_SUCCESS;
         use windows_sys::Win32::System::Registry::{
-            RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegSetValueExW,
-            HKEY_CURRENT_USER, KEY_SET_VALUE, REG_SZ,
+            RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegSetValueExW,
+            HKEY_CURRENT_USER, KEY_SET_VALUE, REG_OPTION_RESERVED, REG_SZ,
         };
 
         let subkey = to_wide(r"Software\Microsoft\Windows\CurrentVersion\Run");
         let val_name = to_wide("YTD");
 
         let mut hkey = std::ptr::null_mut();
-        let status = unsafe {
-            RegOpenKeyExW(
-                HKEY_CURRENT_USER,
-                subkey.as_ptr(),
-                0,
-                KEY_SET_VALUE,
-                &mut hkey,
-            )
+        let status = if enable {
+            unsafe {
+                RegCreateKeyExW(
+                    HKEY_CURRENT_USER,
+                    subkey.as_ptr(),
+                    0,
+                    std::ptr::null(),
+                    REG_OPTION_RESERVED,
+                    KEY_SET_VALUE,
+                    std::ptr::null(),
+                    &mut hkey,
+                    std::ptr::null_mut(),
+                )
+            }
+        } else {
+            unsafe {
+                RegOpenKeyExW(
+                    HKEY_CURRENT_USER,
+                    subkey.as_ptr(),
+                    0,
+                    KEY_SET_VALUE,
+                    &mut hkey,
+                )
+            }
         };
 
         if status != ERROR_SUCCESS {
-            return Err(format!("Failed to open Run registry key: error code {}", status));
+            if !enable {
+                cleanup_legacy_corrupted_keys();
+                return Ok(());
+            }
+            return Err(format!("Failed to open/create Run registry key: error code {}", status));
         }
 
         let result = if enable {
