@@ -6,6 +6,7 @@ mod downloader;
 mod notifier;
 mod sanitizer;
 mod server;
+mod single_instance;
 mod tray;
 
 use config::init_shared_config;
@@ -23,6 +24,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     info!("Starting YTD Desktop Daemon...");
+
+    // Enforce singleton instance: only one daemon process per user session
+    let _instance_guard = match single_instance::acquire_single_instance() {
+        Ok(guard) => guard,
+        Err(e) => {
+            tracing::warn!("{}", e);
+            notifier::notify_info(
+                "YTD Daemon",
+                "YTD is already running in your system tray.",
+            );
+            return Ok(());
+        }
+    };
 
     // Setup local %APPDATA%/ytd/bin in PATH
     deps::setup_bin_path();
