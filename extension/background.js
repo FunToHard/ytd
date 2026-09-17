@@ -30,11 +30,11 @@ function setupContextMenus() {
       targetUrlPatterns: ["*://*/*"]
     });
 
-    // 3. Context menu when right-clicking anywhere on YouTube or YT Music pages (background, album art, images, video, text, frames)
+    // 3. Context menu when right-clicking anywhere on YouTube or YT Music pages (background, album art, images, thumbnails, video, text, frames)
     chrome.contextMenus.create({
       id: "ytd-download-page",
       title: "Send Current Page to YTD",
-      contexts: ["page", "image", "video", "audio", "selection", "frame"],
+      contexts: ["all"],
       documentUrlPatterns: [
         "*://*.youtube.com/*",
         "*://youtube.com/*",
