@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.9](https://github.com/FunToHard/ytd/compare/v1.0.8...v1.0.9) (2026-09-17)
+
+### Features
+
+* **desktop:** add "Download Single Track by Default" tray menu checkbox and config persistence
+* **desktop,extension:** add download cancellation and real-time streaming progress in Windows tray menu and browser extension popup
+
+### Bug Fixes
+
+* **extension:** support context menus on all page elements including images and album art ([f6f0664](https://github.com/FunToHard/ytd/commit/f6f0664))
+
 ## [1.0.8](https://github.com/FunToHard/ytd/compare/v1.0.7...v1.0.8) (2026-09-17)
 
 
