@@ -1,5 +1,5 @@
 use crate::config::SharedConfig;
-use crate::downloader::{get_active_downloads_count, Downloader};
+use crate::downloader::{get_active_downloads_count, get_queued_downloads_count, Downloader};
 use crate::sanitizer::{sanitize_url, DownloadTarget};
 use axum::{
     extract::State,
@@ -43,6 +43,7 @@ pub struct HealthData {
     pub status: String,
     pub version: &'static str,
     pub active_downloads: usize,
+    pub queued_downloads: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -92,7 +93,6 @@ pub async fn run_server(config: SharedConfig) -> Result<(), Box<dyn std::error::
         .route("/dependencies/status", get(deps_status_handler))
         .route("/dependencies/install", post(deps_install_handler))
         .route("/dependencies/update", post(deps_update_handler))
-        .route("/helper/open-extension", post(open_extension_handler))
         .layer(cors)
         .layer(from_fn(validate_client_header))
         .with_state(state);
@@ -139,6 +139,7 @@ async fn health_handler() -> impl IntoResponse {
         status: "ok".to_string(),
         version: env!("CARGO_PKG_VERSION"),
         active_downloads: get_active_downloads_count(),
+        queued_downloads: get_queued_downloads_count(),
     };
 
     (
@@ -175,25 +176,34 @@ async fn download_handler(
 ) -> impl IntoResponse {
     match sanitize_url(&payload.url) {
         Ok(sanitized) => {
-            let data = QueuedDownloadData {
-                raw_url: sanitized.raw_url.clone(),
-                clean_url: sanitized.clean_url.clone(),
-                target: sanitized.target,
-                video_id: sanitized.video_id.clone(),
-                playlist_id: sanitized.playlist_id.clone(),
-                message: "Download queued successfully",
-            };
-
-            Downloader::spawn_download(sanitized, state.config.clone());
-
-            (
-                StatusCode::OK,
-                Json(ApiResponse {
-                    success: true,
-                    data: Some(data),
-                    error: None,
-                }),
-            )
+            match Downloader::spawn_download(sanitized.clone(), state.config.clone()) {
+                Ok(_) => {
+                    let data = QueuedDownloadData {
+                        raw_url: sanitized.raw_url,
+                        clean_url: sanitized.clean_url,
+                        target: sanitized.target,
+                        video_id: sanitized.video_id,
+                        playlist_id: sanitized.playlist_id,
+                        message: "Download queued successfully",
+                    };
+                    (
+                        StatusCode::OK,
+                        Json(ApiResponse {
+                            success: true,
+                            data: Some(data),
+                            error: None,
+                        }),
+                    )
+                }
+                Err(err) => (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(ApiResponse {
+                        success: false,
+                        data: None,
+                        error: Some(err),
+                    }),
+                ),
+            }
         }
         Err(err) => (
             StatusCode::BAD_REQUEST,
@@ -261,16 +271,4 @@ async fn deps_update_handler() -> impl IntoResponse {
             }),
         ),
     }
-}
-
-async fn open_extension_handler() -> impl IntoResponse {
-    crate::deps::open_extension_helper();
-    (
-        StatusCode::OK,
-        Json(ApiResponse {
-            success: true,
-            data: Some("Opened extension manager and folder"),
-            error: None,
-        }),
-    )
 }

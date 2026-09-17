@@ -95,20 +95,25 @@ pub fn init_app_identity() {
                 .join("Programs")
         }) {
             let shortcut_path = programs_dir.join("YTD.lnk");
-            if let Ok(current_exe) = std::env::current_exe() {
-                let script = format!(
-                    "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('{}'); $s.TargetPath = '{}'; $s.IconLocation = '{},0'; $s.Save();",
-                    shortcut_path.display(),
-                    current_exe.display(),
-                    icon_path_str
-                );
-                let mut cmd = std::process::Command::new("powershell");
-                cmd.creation_flags(CREATE_NO_WINDOW);
-                cmd.arg("-NoProfile")
-                    .arg("-NonInteractive")
-                    .arg("-Command")
-                    .arg(&script);
-                let _ = cmd.output();
+            if !shortcut_path.exists() {
+                if let Ok(current_exe) = std::env::current_exe() {
+                    let shortcut_str = shortcut_path.display().to_string().replace('\'', "''");
+                    let exe_str = current_exe.display().to_string().replace('\'', "''");
+                    let icon_str = icon_path_str.replace('\'', "''");
+                    let script = format!(
+                        "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('{}'); $s.TargetPath = '{}'; $s.IconLocation = '{},0'; $s.Save();",
+                        shortcut_str,
+                        exe_str,
+                        icon_str
+                    );
+                    let mut cmd = std::process::Command::new("powershell");
+                    cmd.creation_flags(CREATE_NO_WINDOW);
+                    cmd.arg("-NoProfile")
+                        .arg("-NonInteractive")
+                        .arg("-Command")
+                        .arg(&script);
+                    let _ = cmd.output();
+                }
             }
         }
     }

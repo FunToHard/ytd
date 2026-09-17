@@ -32,14 +32,7 @@ unsafe impl Sync for SingleInstanceGuard {}
 /// Returns `Ok(guard)` if this is the only running instance in the current session.
 /// Returns `Err(reason)` if another instance is already running or if creation fails.
 pub fn acquire_single_instance() -> Result<SingleInstanceGuard, String> {
-    let guard = acquire_named_instance(DEFAULT_MUTEX_NAME)?;
-
-    // Also verify that the listening port is not already bound by an older daemon or another process
-    if std::net::TcpListener::bind(("127.0.0.1", crate::config::DEFAULT_PORT)).is_err() {
-        return Err("Port 48123 is already in use by an active YTD daemon instance".to_string());
-    }
-
-    Ok(guard)
+    acquire_named_instance(DEFAULT_MUTEX_NAME)
 }
 
 /// Attempts to acquire a single-instance lock with a specific mutex name.

@@ -222,6 +222,24 @@ fn download_and_verify_sha256(
     Ok(())
 }
 
+/// Creates an isolated, unpredictable temporary directory for archive extractions.
+pub fn create_unique_temp_dir(prefix: &str) -> Result<PathBuf, String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    let pid = std::process::id();
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let count = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir_name = format!("{}_{}_{}_{}", prefix, pid, timestamp, count);
+    let temp_dir = std::env::temp_dir().join(dir_name);
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|e| format!("Failed to create temporary directory: {}", e))?;
+    Ok(temp_dir)
+}
+
 fn install_dependencies_sync() -> Result<(), String> {
     use std::fs;
     use std::os::windows::process::CommandExt;
@@ -246,12 +264,7 @@ fn install_dependencies_sync() -> Result<(), String> {
     let ffmpeg_path = bin_dir.join("ffmpeg.exe");
     if !ffmpeg_path.exists() {
         info!("Downloading ffmpeg release archive with SHA-256 verification...");
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-        let temp_dir = std::env::temp_dir().join(format!("ytd_setup_{}_{}", std::process::id(), timestamp));
-        let _ = fs::create_dir_all(&temp_dir);
+        let temp_dir = create_unique_temp_dir("ytd_setup_ffmpeg")?;
         let zip_path = temp_dir.join("ffmpeg.zip");
 
         let ffmpeg_url = "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip";
@@ -286,12 +299,7 @@ fn install_dependencies_sync() -> Result<(), String> {
     let deno_path = bin_dir.join("deno.exe");
     if !deno_path.exists() && !is_in_path("deno") {
         info!("Downloading Deno release archive with SHA-256 verification...");
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-        let temp_dir = std::env::temp_dir().join(format!("ytd_deno_{}_{}", std::process::id(), timestamp));
-        let _ = fs::create_dir_all(&temp_dir);
+        let temp_dir = create_unique_temp_dir("ytd_setup_deno")?;
         let zip_path = temp_dir.join("deno.zip");
 
         let deno_url = "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip";
@@ -435,12 +443,15 @@ fn update_dependencies_sync() -> Result<DependencyUpdateResult, String> {
         }
         _ => {
             info!("deno upgrade unsuccessful, attempting direct download update fallback...");
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis();
-            let temp_dir = std::env::temp_dir().join(format!("ytd_deno_update_{}_{}", std::process::id(), timestamp));
-            let _ = fs::create_dir_all(&temp_dir);
+            let temp_dir = match create_unique_temp_dir("ytd_deno_update") {
+                Ok(d) => d,
+                Err(e) => return Ok(DependencyUpdateResult {
+                    ytdlp_updated,
+                    ytdlp_message,
+                    deno_updated: false,
+                    deno_message: format!("Failed to create temporary directory: {}", e),
+                }),
+            };
             let zip_path = temp_dir.join("deno.zip");
             let deno_url = "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip";
             let checksum_url = "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip.sha256sum";
@@ -517,7 +528,8 @@ pub fn open_extension_helper() {
         let ext_path_str = ext_abs_path.to_string_lossy().to_string();
 
         // Copy folder path to clipboard
-        let ps_cmd = format!("Set-Clipboard -Value '{}'", ext_path_str);
+        let escaped_path = ext_path_str.replace('\'', "''");
+        let ps_cmd = format!("Set-Clipboard -Value '{}'", escaped_path);
         let mut clip = std::process::Command::new("powershell");
         clip.creation_flags(CREATE_NO_WINDOW);
         clip.arg("-NoProfile").arg("-Command").arg(&ps_cmd);
@@ -622,5 +634,18 @@ a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef0  yt-dlp_macos
         );
 
         let _ = std::fs::remove_file(&test_file);
+    }
+
+    #[test]
+    fn test_create_unique_temp_dir() {
+        let dir1 = create_unique_temp_dir("ytd_test_dir").expect("Failed to create dir1");
+        let dir2 = create_unique_temp_dir("ytd_test_dir").expect("Failed to create dir2");
+
+        assert!(dir1.exists());
+        assert!(dir2.exists());
+        assert_ne!(dir1, dir2);
+
+        let _ = std::fs::remove_dir_all(&dir1);
+        let _ = std::fs::remove_dir_all(&dir2);
     }
 }

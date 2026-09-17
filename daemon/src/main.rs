@@ -91,7 +91,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::select! {
             res = server_future => {
                 if let Err(e) = res {
-                    error!("Server error: {}", e);
+                    error!("Fatal daemon server error: {}", e);
+                    notifier::notify_download_failed("Daemon Startup Error", &format!("HTTP server failed to bind: {}", e));
+                    let _ = tx_exit_server.send(());
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    std::process::exit(1);
                 }
             }
             _ = rx_server_exit.recv() => {
@@ -163,7 +167,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Run system tray on the main thread
     let tray_config = config.clone();
-    let tray_thread = std::thread::spawn(move || {
+    let _tray_thread = std::thread::spawn(move || {
         if let Err(e) = tray::run_tray(tray_config, tx_exit_tray) {
             error!("System tray encountered error: {}", e);
         }
@@ -183,7 +187,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     info!("Shutting down YTD Desktop Daemon. Goodbye!");
-    let _ = tray_thread.join();
-
-    Ok(())
+    std::process::exit(0);
 }

@@ -6,25 +6,60 @@ use crate::sanitizer::{DownloadTarget, SanitizedRequest};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::Semaphore;
 use tracing::{error, info};
 
 static ACTIVE_DOWNLOADS: AtomicUsize = AtomicUsize::new(0);
+static QUEUED_DOWNLOADS: AtomicUsize = AtomicUsize::new(0);
+pub const MAX_QUEUED_DOWNLOADS: usize = 50;
+pub const MAX_CONCURRENT_DOWNLOADS: usize = 3;
+
+static DOWNLOAD_SEMAPHORE: std::sync::OnceLock<Arc<Semaphore>> = std::sync::OnceLock::new();
+
+fn get_download_semaphore() -> &'static Arc<Semaphore> {
+    DOWNLOAD_SEMAPHORE.get_or_init(|| Arc::new(Semaphore::new(MAX_CONCURRENT_DOWNLOADS)))
+}
 
 pub fn get_active_downloads_count() -> usize {
     ACTIVE_DOWNLOADS.load(Ordering::Relaxed)
 }
 
+pub fn get_queued_downloads_count() -> usize {
+    QUEUED_DOWNLOADS.load(Ordering::Relaxed)
+}
+
 pub struct Downloader;
 
 impl Downloader {
-    pub fn spawn_download(req: SanitizedRequest, config: SharedConfig) {
+    pub fn spawn_download(req: SanitizedRequest, config: SharedConfig) -> Result<(), String> {
+        let queued = QUEUED_DOWNLOADS.load(Ordering::Relaxed);
+        if queued >= MAX_QUEUED_DOWNLOADS {
+            return Err(format!(
+                "Download queue is full ({} pending downloads). Please wait for active downloads to finish.",
+                queued
+            ));
+        }
+
+        QUEUED_DOWNLOADS.fetch_add(1, Ordering::SeqCst);
+        let is_music = req.target == DownloadTarget::MusicAudio;
+        let display_target = if is_music { "Music" } else { "Video" };
+        info!("Enqueued {} download: {}", display_target, req.clean_url);
+
         tokio::spawn(async move {
+            let sem = get_download_semaphore().clone();
+            let _permit = match sem.acquire_owned().await {
+                Ok(permit) => permit,
+                Err(_) => {
+                    QUEUED_DOWNLOADS.fetch_sub(1, Ordering::SeqCst);
+                    return;
+                }
+            };
+
+            QUEUED_DOWNLOADS.fetch_sub(1, Ordering::SeqCst);
             ACTIVE_DOWNLOADS.fetch_add(1, Ordering::SeqCst);
-            let is_music = req.target == DownloadTarget::MusicAudio;
-            let display_target = if is_music { "Music" } else { "Video" };
-            info!("Queued {} download: {}", display_target, req.clean_url);
 
             notify_download_started(&req.clean_url, is_music);
 
@@ -60,7 +95,10 @@ impl Downloader {
             }
 
             ACTIVE_DOWNLOADS.fetch_sub(1, Ordering::SeqCst);
+            // _permit is dropped here, releasing semaphore slot
         });
+
+        Ok(())
     }
 
     async fn execute_yt_dlp(

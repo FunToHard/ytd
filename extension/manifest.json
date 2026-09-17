@@ -15,6 +15,9 @@
   "background": {
     "service_worker": "background.js"
   },
+  "content_security_policy": {
+    "extension_pages": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src http://127.0.0.1:48123; object-src 'none'; base-uri 'none';"
+  },
   "action": {
     "default_popup": "popup/popup.html",
     "default_icon": {
