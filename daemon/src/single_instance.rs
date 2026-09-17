@@ -40,7 +40,7 @@ pub fn acquire_single_instance() -> Result<SingleInstanceGuard, String> {
     Ok(guard)
 }
 
-/// Helper function to open an exclusive lockfile with zero shared access.
+/// Helper function to open the default singleton lockfile in the user configuration directory.
 pub fn acquire_lockfile() -> Result<std::fs::File, String> {
     let config_dir = dirs::config_dir()
         .or_else(dirs::data_dir)
@@ -48,7 +48,11 @@ pub fn acquire_lockfile() -> Result<std::fs::File, String> {
         .join("ytd");
     let _ = std::fs::create_dir_all(&config_dir);
     let lock_path = config_dir.join("ytd.lock");
+    acquire_lockfile_at(&lock_path)
+}
 
+/// Helper function to open an exclusive lockfile with zero shared access at a specific path.
+pub fn acquire_lockfile_at(lock_path: &std::path::Path) -> Result<std::fs::File, String> {
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
@@ -57,7 +61,7 @@ pub fn acquire_lockfile() -> Result<std::fs::File, String> {
         // dwShareMode = 0: Deny all shared access (read, write, delete) to other processes
         options.share_mode(0);
 
-        match options.open(&lock_path) {
+        match options.open(lock_path) {
             Ok(file) => Ok(file),
             Err(e) => {
                 if e.raw_os_error() == Some(32) {
@@ -75,7 +79,7 @@ pub fn acquire_lockfile() -> Result<std::fs::File, String> {
             .read(true)
             .write(true)
             .create(true)
-            .open(&lock_path)
+            .open(lock_path)
             .map_err(|e| format!("Failed to open lockfile: {}", e))
     }
 }
@@ -148,18 +152,30 @@ mod tests {
 
     #[test]
     fn test_lockfile_acquisition() {
-        let lock1 = acquire_lockfile();
+        let temp_dir = std::env::temp_dir();
+        let test_lock = temp_dir.join(format!(
+            "ytd_unit_test_lock_{}.lock",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+
+        let lock1 = acquire_lockfile_at(&test_lock);
         assert!(lock1.is_ok(), "First lockfile acquisition should succeed");
 
         #[cfg(windows)]
         {
-            let lock2 = acquire_lockfile();
+            let lock2 = acquire_lockfile_at(&test_lock);
             assert!(lock2.is_err(), "Concurrent lockfile acquisition should fail");
         }
 
         drop(lock1);
 
-        let lock3 = acquire_lockfile();
+        let lock3 = acquire_lockfile_at(&test_lock);
         assert!(lock3.is_ok(), "Re-acquiring lockfile after drop should succeed");
+
+        drop(lock3);
+        let _ = std::fs::remove_file(&test_lock);
     }
 }

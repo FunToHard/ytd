@@ -89,6 +89,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path "target\portable\ytd"
           Copy-Item "target\release\ytd-daemon.exe" -Destination "target\portable\ytd\"
           Copy-Item "README.md" -Destination "target\portable\ytd\"
+          Copy-Item "LICENSE" -Destination "target\portable\ytd\"
           Copy-Item "daemon\resources\app-icon.ico" -Destination "target\portable\ytd\"
           Compress-Archive -Path "target\portable\ytd\*" -DestinationPath "artifacts\ytd-daemon-windows-x86_64.zip" -Force
 

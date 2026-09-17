@@ -6,6 +6,7 @@
 [![Downloads](https://img.shields.io/github/downloads/FunToHard/ytd/latest/total?style=flat-square&logo=github&color=green)](https://github.com/FunToHard/ytd/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6?style=flat-square&logo=windows)](https://github.com/FunToHard/ytd/releases/latest)
 [![Rust Edition](https://img.shields.io/badge/rust-2021%20edition-DEA584?style=flat-square&logo=rust)](https://www.rust-lang.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
 
 YTD downloads YouTube videos and YouTube Music tracks directly from your web browser. The system contains two components: a Rust desktop daemon and a browser extension.
 
@@ -161,3 +162,9 @@ Test the zero-CLI installation in a clean environment:
 2. Windows Sandbox starts an isolated virtual machine.
 3. The sandbox script disables Smart App Control automatically.
 4. Follow the on-screen prompts to verify dependency installation.
+
+---
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

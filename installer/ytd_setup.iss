@@ -28,6 +28,7 @@ WizardStyle=modern
 PrivilegesRequired=lowest
 OutputDir=..\target\installer
 SetupIconFile=..\daemon\resources\app-icon.ico
+LicenseFile=..\LICENSE
 UninstallDisplayIcon={app}\{#MyAppExeName}
 CloseApplications=force
 RestartApplications=no
@@ -54,8 +55,9 @@ Root: HKCU; Subkey: "Software\Classes\AppUserModelId\YTD"""; Flags: dontcreateke
 Source: "..\target\release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 ; Browser Extension
 Source: "..\extension\*"; DestDir: "{app}\extension"; Flags: ignoreversion recursesubdirs createallsubdirs
-; Documentation
+; Documentation & License
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 ; Icon
 Source: "..\daemon\resources\app-icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 
