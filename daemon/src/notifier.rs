@@ -241,6 +241,16 @@ pub fn notify_download_failed(title: &str, err: &str) {
     );
 }
 
+pub fn notify_download_cancelled(title: &str) {
+    info!("Notification: Download cancelled - {}", title);
+    show_toast(
+        "YTD: Download Cancelled",
+        title,
+        None,
+        Duration::Short,
+    );
+}
+
 pub fn notify_setup_required() {
     show_toast(
         "YTD: Setup Required",

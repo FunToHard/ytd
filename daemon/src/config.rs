@@ -5,6 +5,10 @@ use std::sync::{Arc, RwLock};
 
 pub const DEFAULT_PORT: u16 = 48123;
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub video_download_dir: PathBuf,
@@ -13,6 +17,8 @@ pub struct Config {
     pub auto_strip_mixes: bool,
     #[serde(default)]
     pub auto_start: bool,
+    #[serde(default = "default_true")]
+    pub single_track_default: bool,
 }
 
 impl Default for Config {
@@ -40,6 +46,7 @@ impl Default for Config {
             port: DEFAULT_PORT,
             auto_strip_mixes: true,
             auto_start: false,
+            single_track_default: true,
         }
     }
 }
@@ -98,6 +105,11 @@ impl Config {
         if let Err(e) = set_auto_start_registry(enable) {
             tracing::error!("Failed to update auto start in registry: {}", e);
         }
+        self.save();
+    }
+
+    pub fn update_single_track_default(&mut self, enable: bool) {
+        self.single_track_default = enable;
         self.save();
     }
 }
@@ -281,8 +293,31 @@ mod tests {
         assert_eq!(config.port, DEFAULT_PORT);
         assert!(config.auto_strip_mixes);
         assert!(!config.auto_start);
+        assert!(config.single_track_default);
         assert!(!config.video_download_dir.as_os_str().is_empty());
         assert!(!config.audio_download_dir.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn test_single_track_default_serde() {
+        let json = r#"{
+            "video_download_dir": "C:\\videos",
+            "audio_download_dir": "C:\\music",
+            "port": 48123,
+            "auto_strip_mixes": true
+        }"#;
+        let cfg: Config = serde_json::from_str(json).expect("Deserialization should succeed");
+        assert!(cfg.single_track_default);
+
+        let json_disabled = r#"{
+            "video_download_dir": "C:\\videos",
+            "audio_download_dir": "C:\\music",
+            "port": 48123,
+            "auto_strip_mixes": true,
+            "single_track_default": false
+        }"#;
+        let cfg_disabled: Config = serde_json::from_str(json_disabled).expect("Deserialization should succeed");
+        assert!(!cfg_disabled.single_track_default);
     }
 
     #[test]

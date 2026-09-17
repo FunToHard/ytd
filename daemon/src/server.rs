@@ -51,16 +51,30 @@ pub struct ConfigData {
     pub video_download_dir: String,
     pub audio_download_dir: String,
     pub port: u16,
+    pub single_track_default: bool,
 }
 
 #[derive(Debug, Serialize)]
 pub struct QueuedDownloadData {
+    pub id: u64,
     pub raw_url: String,
     pub clean_url: String,
     pub target: DownloadTarget,
     pub video_id: Option<String>,
     pub playlist_id: Option<String>,
     pub message: &'static str,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CancelDownloadPayload {
+    pub id: Option<u64>,
+    pub all: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CancelResultData {
+    pub cancelled_count: usize,
+    pub message: String,
 }
 
 pub async fn run_server(config: SharedConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -90,6 +104,8 @@ pub async fn run_server(config: SharedConfig) -> Result<(), Box<dyn std::error::
         .route("/health", get(health_handler))
         .route("/config", get(config_handler))
         .route("/download", post(download_handler))
+        .route("/downloads/active", get(active_downloads_handler))
+        .route("/downloads/cancel", post(cancel_download_handler))
         .route("/dependencies/status", get(deps_status_handler))
         .route("/dependencies/install", post(deps_install_handler))
         .route("/dependencies/update", post(deps_update_handler))
@@ -158,6 +174,7 @@ async fn config_handler(State(state): State<AppState>) -> impl IntoResponse {
         video_download_dir: cfg.video_download_dir.to_string_lossy().to_string(),
         audio_download_dir: cfg.audio_download_dir.to_string_lossy().to_string(),
         port: cfg.port,
+        single_track_default: cfg.single_track_default,
     };
 
     (
@@ -177,8 +194,9 @@ async fn download_handler(
     match sanitize_url(&payload.url) {
         Ok(sanitized) => {
             match Downloader::spawn_download(sanitized.clone(), state.config.clone()) {
-                Ok(_) => {
+                Ok(task_id) => {
                     let data = QueuedDownloadData {
+                        id: task_id,
                         raw_url: sanitized.raw_url,
                         clean_url: sanitized.clean_url,
                         target: sanitized.target,
@@ -270,5 +288,97 @@ async fn deps_update_handler() -> impl IntoResponse {
                 error: Some(err),
             }),
         ),
+    }
+}
+
+async fn active_downloads_handler() -> impl IntoResponse {
+    let list = Downloader::get_active_downloads();
+    (
+        StatusCode::OK,
+        Json(ApiResponse {
+            success: true,
+            data: Some(list),
+            error: None,
+        }),
+    )
+}
+
+async fn cancel_download_handler(
+    Json(payload): Json<CancelDownloadPayload>,
+) -> impl IntoResponse {
+    if payload.all.unwrap_or(false) {
+        let count = Downloader::cancel_all_downloads();
+        (
+            StatusCode::OK,
+            Json(ApiResponse {
+                success: true,
+                data: Some(CancelResultData {
+                    cancelled_count: count,
+                    message: format!("Cancelled {} download(s)", count),
+                }),
+                error: None,
+            }),
+        )
+    } else if let Some(id) = payload.id {
+        if Downloader::cancel_download(id) {
+            (
+                StatusCode::OK,
+                Json(ApiResponse {
+                    success: true,
+                    data: Some(CancelResultData {
+                        cancelled_count: 1,
+                        message: format!("Download #{} cancelled", id),
+                    }),
+                    error: None,
+                }),
+            )
+        } else {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiResponse {
+                    success: false,
+                    data: None,
+                    error: Some(format!("Download #{} not found or already completed", id)),
+                }),
+            )
+        }
+    } else {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse {
+                success: false,
+                data: None,
+                error: Some("Must specify 'id' or 'all: true'".to_string()),
+            }),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cancel_payload_deserialization() {
+        let json = r#"{"id": 42}"#;
+        let payload: CancelDownloadPayload = serde_json::from_str(json).unwrap();
+        assert_eq!(payload.id, Some(42));
+        assert_eq!(payload.all, None);
+
+        let json_all = r#"{"all": true}"#;
+        let payload_all: CancelDownloadPayload = serde_json::from_str(json_all).unwrap();
+        assert_eq!(payload_all.all, Some(true));
+        assert_eq!(payload_all.id, None);
+    }
+
+    #[test]
+    fn test_cancel_result_serialization() {
+        let res = CancelResultData {
+            cancelled_count: 2,
+            message: "Cancelled 2 download(s)".to_string(),
+        };
+        let json = serde_json::to_string(&res).unwrap();
+        assert!(json.contains("\"cancelled_count\":2"));
+        assert!(json.contains("Cancelled 2 download(s)"));
     }
 }

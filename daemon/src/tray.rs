@@ -31,10 +31,19 @@ pub fn run_tray(
     let item_video = MenuItem::new("Open Video Folder", true, None);
     let item_change_video = MenuItem::new("Change Video Download Folder...", true, None);
 
-    let initial_startup = {
+    let (initial_startup, initial_single_track) = {
         let cfg = config.read().unwrap_or_else(|e| e.into_inner());
-        cfg.auto_start || crate::config::is_auto_start_registered()
+        (
+            cfg.auto_start || crate::config::is_auto_start_registered(),
+            cfg.single_track_default,
+        )
     };
+    let item_single_track = CheckMenuItem::new(
+        "Download Single Track by Default",
+        true,
+        initial_single_track,
+        None,
+    );
     let item_startup = CheckMenuItem::new("Run at Startup", true, initial_startup, None);
 
     let item_quit = MenuItem::new("Quit YTD Daemon", true, None);
@@ -50,12 +59,13 @@ pub fn run_tray(
     menu.append(&item_video)?;
     menu.append(&item_change_video)?;
     menu.append(&PredefinedMenuItem::separator())?;
+    menu.append(&item_single_track)?;
     menu.append(&item_startup)?;
     menu.append(&PredefinedMenuItem::separator())?;
     menu.append(&item_quit)?;
 
     let _tray_icon = TrayIconBuilder::new()
-        .with_menu(Box::new(menu))
+        .with_menu(Box::new(menu.clone()))
         .with_tooltip("YTD Link Downloader Daemon")
         .with_icon(icon)
         .build()?;
@@ -64,18 +74,61 @@ pub fn run_tray(
 
     let menu_channel = MenuEvent::receiver();
 
+    let mut download_menu_items: Vec<(u64, MenuItem)> = Vec::new();
+    let mut cancel_all_item: Option<MenuItem> = None;
+
     unsafe {
         use windows_sys::Win32::UI::WindowsAndMessaging::{
-            DispatchMessageW, GetMessageW, PostQuitMessage, TranslateMessage, MSG,
+            DispatchMessageW, GetMessageW, KillTimer, PostQuitMessage, SetTimer, TranslateMessage,
+            MSG, WM_TIMER,
         };
 
+        const REFRESH_TIMER_ID: usize = 1001;
+        let timer = SetTimer(std::ptr::null_mut(), REFRESH_TIMER_ID, 1000, None);
         let mut msg: MSG = std::mem::zeroed();
 
         while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
 
+            if msg.message == WM_TIMER {
+                refresh_download_menu_items(
+                    &menu,
+                    &mut download_menu_items,
+                    &mut cancel_all_item,
+                );
+            }
+
             while let Ok(event) = menu_channel.try_recv() {
+                // Check if a download cancellation item was clicked
+                let mut cancelled_id = None;
+                for (task_id, item) in &download_menu_items {
+                    if event.id == item.id() {
+                        cancelled_id = Some(*task_id);
+                        break;
+                    }
+                }
+                if let Some(id) = cancelled_id {
+                    crate::downloader::Downloader::cancel_download(id);
+                    refresh_download_menu_items(
+                        &menu,
+                        &mut download_menu_items,
+                        &mut cancel_all_item,
+                    );
+                    continue;
+                }
+
+                if let Some(ca) = &cancel_all_item {
+                    if event.id == ca.id() {
+                        crate::downloader::Downloader::cancel_all_downloads();
+                        refresh_download_menu_items(
+                            &menu,
+                            &mut download_menu_items,
+                            &mut cancel_all_item,
+                        );
+                        continue;
+                    }
+                }
                 if event.id == item_deps.id() {
                     let dep_status = crate::deps::check_dependencies();
                     if !dep_status.all_ready {
@@ -233,6 +286,11 @@ pub fn run_tray(
                             cfg.update_video_dir(folder);
                         }
                     });
+                } else if event.id == item_single_track.id() {
+                    let is_checked = item_single_track.is_checked();
+                    info!("Single track default setting toggled to: {}", is_checked);
+                    let mut cfg = config.write().unwrap_or_else(|e| e.into_inner());
+                    cfg.update_single_track_default(is_checked);
                 } else if event.id == item_startup.id() {
                     let is_checked = item_startup.is_checked();
                     info!("Startup setting toggled to: {}", is_checked);
@@ -245,7 +303,84 @@ pub fn run_tray(
                 }
             }
         }
+
+        KillTimer(std::ptr::null_mut(), timer);
     }
 
     Ok(())
 }
+
+fn refresh_download_menu_items(
+    menu: &Menu,
+    download_menu_items: &mut Vec<(u64, MenuItem)>,
+    cancel_all_item: &mut Option<MenuItem>,
+) {
+    let active_list = crate::downloader::Downloader::get_active_downloads();
+
+    // 1. Update or remove existing items
+    let mut i = 0;
+    while i < download_menu_items.len() {
+        let (task_id, item) = &download_menu_items[i];
+        if let Some(info) = active_list.iter().find(|a| a.id == *task_id) {
+            let label = crate::downloader::format_cancel_label(info, 28);
+            item.set_text(&label);
+            i += 1;
+        } else {
+            let (_, item) = download_menu_items.remove(i);
+            let _ = menu.remove(&item);
+        }
+    }
+
+    // 2. Insert any newly started items right below item_status (index 1 + offset)
+    for info in &active_list {
+        if !download_menu_items.iter().any(|(id, _)| *id == info.id) {
+            let label = crate::downloader::format_cancel_label(info, 28);
+            let new_item = MenuItem::new(&label, true, None);
+            let insert_pos = 1 + download_menu_items.len();
+            if menu.insert(&new_item, insert_pos).is_ok() {
+                download_menu_items.push((info.id, new_item));
+            }
+        }
+    }
+
+    // 3. Manage Cancel All item when multiple downloads exist
+    if active_list.len() > 1 {
+        let label = format!("✕ Cancel All Downloads ({})", active_list.len());
+        if let Some(ca) = cancel_all_item {
+            ca.set_text(&label);
+        } else {
+            let ca = MenuItem::new(&label, true, None);
+            let insert_pos = 1 + download_menu_items.len();
+            if menu.insert(&ca, insert_pos).is_ok() {
+                *cancel_all_item = Some(ca);
+            }
+        }
+    } else if let Some(ca) = cancel_all_item.take() {
+        let _ = menu.remove(&ca);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tray_menu_structure() {
+        let menu = Menu::new();
+        let item_status = MenuItem::new("YTD Daemon: Online", false, None);
+        let sep = PredefinedMenuItem::separator();
+        menu.append(&item_status).unwrap();
+        menu.append(&sep).unwrap();
+
+        let mut download_menu_items = Vec::new();
+        let mut cancel_all_item = None;
+
+        // Initially no active downloads
+        refresh_download_menu_items(&menu, &mut download_menu_items, &mut cancel_all_item);
+        assert_eq!(download_menu_items.len(), 0);
+        assert!(cancel_all_item.is_none());
+        assert_eq!(menu.items().len(), 2);
+    }
+}
+
+
