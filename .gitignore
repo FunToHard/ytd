@@ -19,3 +19,7 @@ $RECYCLE.BIN/
 # Temporary directories and logs
 *.log
 test_out/
+
+# Python cache
+__pycache__/
+*.py[cod]

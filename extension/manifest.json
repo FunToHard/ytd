@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YTD - YouTube & YT Music Downloader",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Send YouTube and YouTube Music links directly to your desktop YTD daemon with auto MP3 extraction and link metadata stripping.",
   "permissions": [
     "contextMenus",

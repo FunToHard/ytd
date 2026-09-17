@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.0.8](https://github.com/FunToHard/ytd/compare/v1.0.7...v1.0.8) (2026-09-17)
+
+
+### Bug Fixes
+
+* **desktop:** generate multi-resolution anti-aliased app-icon.ico and embed up to 256x256 in daemon PE
+* **extension:** support image and media context menus on YouTube and YouTube Music ([4af65c2](https://github.com/FunToHard/ytd/commit/4af65c267803f368828ef52ef3a918dff25b5591))
+
+### Documentation
+
+* add MIT license, setup installer license agreement, and update documentation ([40ce47a](https://github.com/FunToHard/ytd/commit/40ce47ad1f957dbf0c8c54be7381e71809fd4398))
+
 ## [1.0.7](https://github.com/FunToHard/ytd/compare/v1.0.6...v1.0.7) (2026-09-17)
 
 
