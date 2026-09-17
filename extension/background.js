@@ -148,17 +148,22 @@ async function sendUrlToDaemon(rawUrl) {
   }
 }
 
-async function saveHistoryItem(item) {
-  try {
-    const res = await chrome.storage.local.get(["downloadHistory"]);
-    const history = res.downloadHistory || [];
-    history.unshift(item);
-    // Keep last 15 items
-    if (history.length > 15) {
-      history.pop();
+let historyQueue = Promise.resolve();
+
+function saveHistoryItem(item) {
+  historyQueue = historyQueue.then(async () => {
+    try {
+      const res = await chrome.storage.local.get(["downloadHistory"]);
+      const history = Array.isArray(res.downloadHistory) ? res.downloadHistory : [];
+      history.unshift(item);
+      // Keep last 15 items
+      if (history.length > 15) {
+        history.length = 15;
+      }
+      await chrome.storage.local.set({ downloadHistory: history });
+    } catch (e) {
+      console.error("Failed to save download history", e);
     }
-    await chrome.storage.local.set({ downloadHistory: history });
-  } catch (e) {
-    console.error("Failed to save download history", e);
-  }
+  });
+  return historyQueue;
 }

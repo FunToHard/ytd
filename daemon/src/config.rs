@@ -17,14 +17,22 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
+        let fallback_base = dirs::home_dir()
+            .or_else(dirs::data_dir)
+            .unwrap_or_else(|| {
+                std::env::var("USERPROFILE")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|_| PathBuf::from("C:\\"))
+            });
+
         let music_dir = dirs::audio_dir()
             .or_else(|| dirs::home_dir().map(|h| h.join("Music")))
-            .unwrap_or_else(|| PathBuf::from("./Music"));
+            .unwrap_or_else(|| fallback_base.join("Music"));
 
         let video_dir = dirs::download_dir()
             .or_else(|| dirs::home_dir().map(|h| h.join("Downloads")))
             .map(|d| d.join("ytd"))
-            .unwrap_or_else(|| PathBuf::from("./Downloads/ytd"));
+            .unwrap_or_else(|| fallback_base.join("Downloads").join("ytd"));
 
         Self {
             video_download_dir: video_dir,
@@ -39,7 +47,12 @@ impl Default for Config {
 impl Config {
     pub fn config_file_path() -> PathBuf {
         let dir = dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
+            .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
+            .unwrap_or_else(|| {
+                std::env::var("APPDATA")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|_| PathBuf::from("C:\\ProgramData"))
+            })
             .join("ytd");
         let _ = fs::create_dir_all(&dir);
         dir.join("config.json")

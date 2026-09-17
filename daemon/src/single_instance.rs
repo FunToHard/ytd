@@ -6,11 +6,12 @@ use windows_sys::Win32::System::Threading::CreateMutexW;
 /// Default session-isolated mutex name for the YTD desktop daemon.
 pub const DEFAULT_MUTEX_NAME: &str = r"Local\YTD_Daemon_SingleInstance_Mutex";
 
-/// RAII guard representing ownership of the single-instance mutex.
-/// When dropped, the underlying kernel mutex handle is closed.
+/// RAII guard representing ownership of the single-instance mutex and lockfile.
+/// When dropped, the underlying kernel mutex handle and lockfile are released.
 pub struct SingleInstanceGuard {
     #[cfg(windows)]
     handle: HANDLE,
+    _lock_file: Option<std::fs::File>,
 }
 
 #[cfg(windows)]
@@ -32,7 +33,51 @@ unsafe impl Sync for SingleInstanceGuard {}
 /// Returns `Ok(guard)` if this is the only running instance in the current session.
 /// Returns `Err(reason)` if another instance is already running or if creation fails.
 pub fn acquire_single_instance() -> Result<SingleInstanceGuard, String> {
-    acquire_named_instance(DEFAULT_MUTEX_NAME)
+    // Exclusive lockfile in %APPDATA%\ytd\ytd.lock prevents low-integrity DoS squatting
+    let lock_file = acquire_lockfile()?;
+    let mut guard = acquire_named_instance(DEFAULT_MUTEX_NAME)?;
+    guard._lock_file = Some(lock_file);
+    Ok(guard)
+}
+
+/// Helper function to open an exclusive lockfile with zero shared access.
+pub fn acquire_lockfile() -> Result<std::fs::File, String> {
+    let config_dir = dirs::config_dir()
+        .or_else(dirs::data_dir)
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("ytd");
+    let _ = std::fs::create_dir_all(&config_dir);
+    let lock_path = config_dir.join("ytd.lock");
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        // dwShareMode = 0: Deny all shared access (read, write, delete) to other processes
+        options.share_mode(0);
+
+        match options.open(&lock_path) {
+            Ok(file) => Ok(file),
+            Err(e) => {
+                if e.raw_os_error() == Some(32) {
+                    Err("Another instance of YTD Daemon is already running (locked ytd.lock)".to_string())
+                } else {
+                    Err(format!("Could not acquire singleton lockfile {:?}: {}", lock_path, e))
+                }
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&lock_path)
+            .map_err(|e| format!("Failed to open lockfile: {}", e))
+    }
 }
 
 /// Attempts to acquire a single-instance lock with a specific mutex name.
@@ -61,13 +106,13 @@ pub fn acquire_named_instance(mutex_name: &str) -> Result<SingleInstanceGuard, S
             return Err("Another instance of YTD Daemon is already running in this user session".to_string());
         }
 
-        Ok(SingleInstanceGuard { handle })
+        Ok(SingleInstanceGuard { handle, _lock_file: None })
     }
 
     #[cfg(not(windows))]
     {
         let _ = mutex_name;
-        Ok(SingleInstanceGuard {})
+        Ok(SingleInstanceGuard { _lock_file: None })
     }
 }
 
@@ -99,5 +144,22 @@ mod tests {
             guard3.is_ok(),
             "Acquisition should succeed after the previous guard is dropped"
         );
+    }
+
+    #[test]
+    fn test_lockfile_acquisition() {
+        let lock1 = acquire_lockfile();
+        assert!(lock1.is_ok(), "First lockfile acquisition should succeed");
+
+        #[cfg(windows)]
+        {
+            let lock2 = acquire_lockfile();
+            assert!(lock2.is_err(), "Concurrent lockfile acquisition should fail");
+        }
+
+        drop(lock1);
+
+        let lock3 = acquire_lockfile();
+        assert!(lock3.is_ok(), "Re-acquiring lockfile after drop should succeed");
     }
 }

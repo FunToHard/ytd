@@ -58,7 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = init_shared_config();
     {
-        let cfg = config.read().unwrap();
+        let cfg = config.read().unwrap_or_else(|e| e.into_inner());
         info!("Audio Download Dir: {:?}", cfg.audio_download_dir);
         info!("Video Download Dir: {:?}", cfg.video_download_dir);
         info!("Listening Port: {}", cfg.port);

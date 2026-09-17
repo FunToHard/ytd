@@ -198,7 +198,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function loadHistory() {
     const res = await chrome.storage.local.get(["downloadHistory"]);
-    const history = res.downloadHistory || [];
+    const history = Array.isArray(res?.downloadHistory) ? res.downloadHistory : [];
     historyList.innerHTML = "";
 
     if (history.length === 0) {
@@ -210,6 +210,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     history.forEach((item) => {
+      if (!item || !item.url) return;
       const li = document.createElement("li");
       li.className = "history-item";
 
@@ -220,7 +221,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const tagSpan = document.createElement("span");
       tagSpan.className = "history-tag";
-      tagSpan.textContent = item.type;
+      tagSpan.textContent = item.type || "Media";
 
       li.appendChild(urlSpan);
       li.appendChild(tagSpan);

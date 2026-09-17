@@ -110,12 +110,25 @@ impl Downloader {
         let dest_str = dest_dir.to_string_lossy().to_string();
         let _ = tokio::fs::create_dir_all(dest_dir).await;
 
-        let mut cmd = Command::new("yt-dlp");
+        let bin_dir = crate::deps::get_bin_dir();
+        let ytdlp_path = bin_dir.join("yt-dlp.exe");
+        let ytdlp_bin = if ytdlp_path.exists() {
+            ytdlp_path
+        } else {
+            PathBuf::from("yt-dlp")
+        };
+
+        let mut cmd = Command::new(&ytdlp_bin);
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         #[cfg(windows)]
         {
             cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+
+        // Pass verified ffmpeg location if present
+        if bin_dir.join("ffmpeg.exe").exists() {
+            cmd.arg("--ffmpeg-location").arg(&bin_dir);
         }
 
         // Basic settings

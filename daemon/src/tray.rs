@@ -32,7 +32,7 @@ pub fn run_tray(
     let item_change_video = MenuItem::new("Change Video Download Folder...", true, None);
 
     let initial_startup = {
-        let cfg = config.read().unwrap();
+        let cfg = config.read().unwrap_or_else(|e| e.into_inner());
         cfg.auto_start || crate::config::is_auto_start_registered()
     };
     let item_startup = CheckMenuItem::new("Run at Startup", true, initial_startup, None);
@@ -202,7 +202,7 @@ pub fn run_tray(
                     });
                 } else if event.id == item_music.id() {
                     let path = {
-                        let cfg = config.read().unwrap();
+                        let cfg = config.read().unwrap_or_else(|e| e.into_inner());
                         cfg.audio_download_dir.clone()
                     };
                     if let Err(e) = open::that(&path) {
@@ -210,7 +210,7 @@ pub fn run_tray(
                     }
                 } else if event.id == item_video.id() {
                     let path = {
-                        let cfg = config.read().unwrap();
+                        let cfg = config.read().unwrap_or_else(|e| e.into_inner());
                         cfg.video_download_dir.clone()
                     };
                     if let Err(e) = open::that(&path) {
@@ -220,7 +220,7 @@ pub fn run_tray(
                     let cfg_for_picker = config.clone();
                     std::thread::spawn(move || {
                         let initial = {
-                            let cfg = cfg_for_picker.read().unwrap();
+                            let cfg = cfg_for_picker.read().unwrap_or_else(|e| e.into_inner());
                             cfg.video_download_dir.clone()
                         };
                         if let Some(folder) = rfd::FileDialog::new()
@@ -229,14 +229,14 @@ pub fn run_tray(
                             .pick_folder()
                         {
                             info!("Updated video download directory to: {:?}", folder);
-                            let mut cfg = cfg_for_picker.write().unwrap();
+                            let mut cfg = cfg_for_picker.write().unwrap_or_else(|e| e.into_inner());
                             cfg.update_video_dir(folder);
                         }
                     });
                 } else if event.id == item_startup.id() {
                     let is_checked = item_startup.is_checked();
                     info!("Startup setting toggled to: {}", is_checked);
-                    let mut cfg = config.write().unwrap();
+                    let mut cfg = config.write().unwrap_or_else(|e| e.into_inner());
                     cfg.update_auto_start(is_checked);
                 } else if event.id == item_quit.id() {
                     info!("Quit requested from system tray context menu");
