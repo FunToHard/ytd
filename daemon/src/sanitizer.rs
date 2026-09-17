@@ -44,7 +44,27 @@ pub fn sanitize_url(raw: &str) -> Result<SanitizedRequest, String> {
     }
 
     let parsed = Url::parse(trimmed).map_err(|e| format!("Invalid URL: {}", e))?;
+
+    // SEC-02: Enforce that only HTTP and HTTPS protocols are accepted.
+    // Explicitly reject file://, javascript:, data:, ftp://, etc.
+    let scheme = parsed.scheme().to_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return Err(format!(
+            "Unsupported URL scheme '{}'. Only HTTP and HTTPS protocols are permitted.",
+            scheme
+        ));
+    }
+
     let host = parsed.host_str().unwrap_or("").to_lowercase();
+    if host.is_empty() {
+        return Err("URL must contain a valid host".to_string());
+    }
+
+    // SEC-02: Prevent Server-Side Request Forgery (SSRF) and intranet scanning.
+    if is_private_or_local_host(&host) {
+        return Err("Local and private network URLs are prohibited".to_string());
+    }
+
     let is_yt_music = host == "music.youtube.com";
     let is_standard_yt = host == "youtube.com"
         || host == "www.youtube.com"
@@ -176,6 +196,36 @@ pub fn sanitize_url(raw: &str) -> Result<SanitizedRequest, String> {
     })
 }
 
+/// Helper function to detect local, private, or link-local hosts to prevent SSRF
+fn is_private_or_local_host(host: &str) -> bool {
+    let clean_host = host.trim_start_matches('[').trim_end_matches(']');
+    if clean_host == "localhost"
+        || clean_host.ends_with(".localhost")
+        || clean_host.ends_with(".local")
+        || clean_host == "0.0.0.0"
+        || clean_host == "::1"
+    {
+        return true;
+    }
+
+    if let Ok(ip) = clean_host.parse::<std::net::IpAddr>() {
+        match ip {
+            std::net::IpAddr::V4(ipv4) => {
+                ipv4.is_loopback()
+                    || ipv4.is_private()
+                    || ipv4.is_link_local()
+                    || ipv4.is_unspecified()
+                    || ipv4.is_broadcast()
+            }
+            std::net::IpAddr::V6(ipv6) => {
+                ipv6.is_loopback() || ipv6.is_unspecified()
+            }
+        }
+    } else {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,5 +301,23 @@ mod tests {
             res.clean_url,
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLrAlr7vYJ3_9W5Z4jG4e1c1Qf5x8Z"
         );
+    }
+
+    #[test]
+    fn test_disallowed_url_schemes() {
+        assert!(sanitize_url("file:///C:/Windows/win.ini").is_err());
+        assert!(sanitize_url("javascript:alert(1)").is_err());
+        assert!(sanitize_url("data:text/html,test").is_err());
+        assert!(sanitize_url("ftp://ftp.example.com/file.mp4").is_err());
+    }
+
+    #[test]
+    fn test_ssrf_and_private_hosts_rejected() {
+        assert!(sanitize_url("http://127.0.0.1/test").is_err());
+        assert!(sanitize_url("http://localhost/test").is_err());
+        assert!(sanitize_url("http://192.168.1.1/video.mp4").is_err());
+        assert!(sanitize_url("http://10.0.0.1/video.mp4").is_err());
+        assert!(sanitize_url("http://169.254.169.254/latest/meta-data").is_err());
+        assert!(sanitize_url("http://[::1]/video.mp4").is_err());
     }
 }

@@ -3,15 +3,21 @@ use crate::downloader::{get_active_downloads_count, Downloader};
 use crate::sanitizer::{sanitize_url, DownloadTarget};
 use axum::{
     extract::State,
-    http::StatusCode,
-    response::IntoResponse,
+    http::{
+        header::{HeaderName, CONTENT_TYPE},
+        Method, StatusCode,
+    },
+    middleware::{from_fn, Next},
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::info;
+
+pub const EXPECTED_CLIENT_HEADER: &str = "ytd-browser-extension";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -58,13 +64,26 @@ pub struct QueuedDownloadData {
 
 pub async fn run_server(config: SharedConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let port = {
-        let cfg = config.read().unwrap();
+        let cfg = config.read().unwrap_or_else(|e| e.into_inner());
         cfg.port
     };
 
     let state = AppState {
         config: config.clone(),
     };
+
+    // SEC-01: Restrict CORS to browser extension origins only.
+    // Prohibits arbitrary web pages from executing cross-origin requests to the local daemon.
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(|origin, _| {
+            let s = origin.to_str().unwrap_or("");
+            s.starts_with("chrome-extension://") || s.starts_with("moz-extension://")
+        }))
+        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_headers([
+            CONTENT_TYPE,
+            HeaderName::from_static("x-ytd-client"),
+        ]);
 
     let app = Router::new()
         .route("/health", get(health_handler))
@@ -74,7 +93,8 @@ pub async fn run_server(config: SharedConfig) -> Result<(), Box<dyn std::error::
         .route("/dependencies/install", post(deps_install_handler))
         .route("/dependencies/update", post(deps_update_handler))
         .route("/helper/open-extension", post(open_extension_handler))
-        .layer(CorsLayer::permissive())
+        .layer(cors)
+        .layer(from_fn(validate_client_header))
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
@@ -84,6 +104,34 @@ pub async fn run_server(config: SharedConfig) -> Result<(), Box<dyn std::error::
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+async fn validate_client_header(
+    req: axum::extract::Request,
+    next: Next,
+) -> Result<Response, (StatusCode, Json<ApiResponse<()>>)> {
+    // /health endpoint is exempt to allow simple daemon ping checks
+    if req.uri().path() == "/health" {
+        return Ok(next.run(req).await);
+    }
+
+    let client_hdr = req
+        .headers()
+        .get("x-ytd-client")
+        .and_then(|h| h.to_str().ok());
+
+    if client_hdr == Some(EXPECTED_CLIENT_HEADER) {
+        Ok(next.run(req).await)
+    } else {
+        Err((
+            StatusCode::FORBIDDEN,
+            Json(ApiResponse {
+                success: false,
+                data: None,
+                error: Some("Access denied: missing or invalid X-YTD-Client header".to_string()),
+            }),
+        ))
+    }
 }
 
 async fn health_handler() -> impl IntoResponse {
@@ -104,7 +152,7 @@ async fn health_handler() -> impl IntoResponse {
 }
 
 async fn config_handler(State(state): State<AppState>) -> impl IntoResponse {
-    let cfg = state.config.read().unwrap();
+    let cfg = state.config.read().unwrap_or_else(|e| e.into_inner());
     let data = ConfigData {
         video_download_dir: cfg.video_download_dir.to_string_lossy().to_string(),
         audio_download_dir: cfg.audio_download_dir.to_string_lossy().to_string(),

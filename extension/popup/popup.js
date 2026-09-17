@@ -1,4 +1,14 @@
 const DAEMON_URL = "http://127.0.0.1:48123";
+const CLIENT_HEADER = "ytd-browser-extension";
+
+function isValidHttpUrl(urlStr) {
+  try {
+    const u = new URL(urlStr);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 document.addEventListener("DOMContentLoaded", () => {
   const statusPill = document.getElementById("status-pill");
@@ -26,7 +36,10 @@ document.addEventListener("DOMContentLoaded", () => {
     showFeedback("Downloading dependencies in background...", true);
 
     try {
-      await fetch(`${DAEMON_URL}/dependencies/install`, { method: "POST" });
+      await fetch(`${DAEMON_URL}/dependencies/install`, {
+        method: "POST",
+        headers: { "X-YTD-Client": CLIENT_HEADER }
+      });
       pollDependencyInstallation();
     } catch (e) {
       showFeedback("Failed to trigger installation: " + e.message, false);
@@ -39,7 +52,9 @@ document.addEventListener("DOMContentLoaded", () => {
     for (let i = 0; i < 40; i++) {
       await new Promise(r => setTimeout(r, 2500));
       try {
-        const res = await fetch(`${DAEMON_URL}/dependencies/status`);
+        const res = await fetch(`${DAEMON_URL}/dependencies/status`, {
+          headers: { "X-YTD-Client": CLIENT_HEADER }
+        });
         if (res.ok) {
           const json = await res.json();
           if (json.data && json.data.all_ready) {
@@ -91,7 +106,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function checkDaemonStatus() {
     try {
-      const healthRes = await fetch(`${DAEMON_URL}/health`, { signal: AbortSignal.timeout(1500) });
+      const healthRes = await fetch(`${DAEMON_URL}/health`, {
+        signal: AbortSignal.timeout(1500),
+        headers: { "X-YTD-Client": CLIENT_HEADER }
+      });
       if (!healthRes.ok) throw new Error("Health check failed");
       const healthData = await healthRes.json();
 
@@ -100,7 +118,10 @@ document.addEventListener("DOMContentLoaded", () => {
       activeCount.textContent = healthData.data?.active_downloads ?? 0;
 
       // Fetch config directories
-      const configRes = await fetch(`${DAEMON_URL}/config`, { signal: AbortSignal.timeout(1500) });
+      const configRes = await fetch(`${DAEMON_URL}/config`, {
+        signal: AbortSignal.timeout(1500),
+        headers: { "X-YTD-Client": CLIENT_HEADER }
+      });
       if (configRes.ok) {
         const configData = await configRes.json();
         if (configData.data) {
@@ -113,7 +134,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Check dependency health
       try {
-        const depsRes = await fetch(`${DAEMON_URL}/dependencies/status`, { signal: AbortSignal.timeout(1500) });
+        const depsRes = await fetch(`${DAEMON_URL}/dependencies/status`, {
+          signal: AbortSignal.timeout(1500),
+          headers: { "X-YTD-Client": CLIENT_HEADER }
+        });
         if (depsRes.ok) {
           const depsData = await depsRes.json();
           if (depsData.data && !depsData.data.all_ready) {
@@ -134,6 +158,11 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   async function performSend(url) {
+    if (!isValidHttpUrl(url)) {
+      showFeedback("Please enter a valid HTTP or HTTPS link", false);
+      return;
+    }
+
     sendBtn.disabled = true;
     sendCurrentTabBtn.disabled = true;
     showFeedback("Sending to daemon...", true);

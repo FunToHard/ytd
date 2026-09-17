@@ -1,6 +1,8 @@
+use sha2::{Digest, Sha256};
+use std::io::Read;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tracing::info;
+use tracing::{info, warn};
 
 static IS_INSTALLING: AtomicBool = AtomicBool::new(false);
 
@@ -97,6 +99,129 @@ pub async fn install_dependencies() -> Result<(), String> {
     res
 }
 
+/// Computes the SHA-256 hash of a file on disk.
+pub fn compute_file_sha256(path: &std::path::Path) -> Result<String, String> {
+    let mut file = std::fs::File::open(path)
+        .map_err(|e| format!("Failed to open file for checksum calculation: {}", e))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 65536];
+    loop {
+        let bytes_read = file.read(&mut buffer)
+            .map_err(|e| format!("Error reading file during hash calculation: {}", e))?;
+        if bytes_read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes_read]);
+    }
+
+    let hash = hasher.finalize();
+    const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
+    let mut hex = String::with_capacity(64);
+    for &byte in &hash {
+        hex.push(HEX_CHARS[(byte >> 4) as usize] as char);
+        hex.push(HEX_CHARS[(byte & 0x0f) as usize] as char);
+    }
+    Ok(hex)
+}
+
+/// Parses an expected 64-character hex SHA-256 hash from a checksum manifest file.
+pub fn extract_sha256_for_asset(manifest: &str, asset_name: Option<&str>) -> Option<String> {
+    for line in manifest.lines() {
+        let line = line.trim();
+        if let Some(target) = asset_name {
+            if !line.contains(target) {
+                continue;
+            }
+        }
+        for word in line.split_whitespace() {
+            let clean = word.trim().trim_matches('"').trim_matches('\'');
+            if clean.len() == 64 && clean.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Some(clean.to_lowercase());
+            }
+        }
+    }
+    None
+}
+
+/// Downloads a file via curl.exe, falling back to PowerShell Invoke-WebRequest.
+fn download_file(url: &str, dest: &std::path::Path) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let mut cmd = std::process::Command::new("curl.exe");
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd.arg("-L").arg("-s").arg("-f").arg("-o").arg(dest).arg(url);
+
+    if let Ok(status) = cmd.status() {
+        if status.success() && dest.exists() {
+            return Ok(());
+        }
+    }
+
+    // PowerShell fallback with single quote escaping
+    let dest_str = dest.display().to_string().replace('\'', "''");
+    let url_str = url.replace('\'', "''");
+    let ps_script = format!(
+        "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '{}' -OutFile '{}'",
+        url_str, dest_str
+    );
+    let mut ps_cmd = std::process::Command::new("powershell");
+    ps_cmd.creation_flags(CREATE_NO_WINDOW);
+    ps_cmd.arg("-NoProfile").arg("-Command").arg(&ps_script);
+    let ps_status = ps_cmd.status().map_err(|e| format!("PowerShell download failed: {}", e))?;
+    if ps_status.success() && dest.exists() {
+        Ok(())
+    } else {
+        Err(format!("Failed to download from {}", url))
+    }
+}
+
+/// SEC-03: Downloads a release binary or archive and verifies its SHA-256 checksum against official manifests.
+fn download_and_verify_sha256(
+    url: &str,
+    dest: &std::path::Path,
+    checksum_url: &str,
+    asset_name: Option<&str>,
+) -> Result<(), String> {
+    let temp_manifest = dest.with_extension(format!(
+        "manifest_{}.tmp",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()
+    ));
+
+    // 1. Download checksum manifest
+    download_file(checksum_url, &temp_manifest)
+        .map_err(|e| format!("Failed to download checksum manifest from {}: {}", checksum_url, e))?;
+
+    let manifest_content = std::fs::read_to_string(&temp_manifest)
+        .map_err(|e| format!("Failed to read checksum manifest: {}", e))?;
+    let _ = std::fs::remove_file(&temp_manifest);
+
+    let expected_hash = extract_sha256_for_asset(&manifest_content, asset_name)
+        .ok_or_else(|| format!("Could not find expected SHA-256 hash for {:?}", asset_name))?;
+
+    // 2. Download target binary
+    download_file(url, dest)?;
+
+    // 3. Compute and verify SHA-256
+    let computed_hash = compute_file_sha256(dest)?;
+    if computed_hash.to_lowercase() != expected_hash.to_lowercase() {
+        let _ = std::fs::remove_file(dest);
+        return Err(format!(
+            "Security verification failed: SHA-256 checksum mismatch for {} (expected {}, computed {})",
+            dest.display(),
+            expected_hash,
+            computed_hash
+        ));
+    }
+
+    info!(
+        "SHA-256 verified for {:?}: {}",
+        dest.file_name().unwrap_or_default(),
+        computed_hash
+    );
+    Ok(())
+}
+
 fn install_dependencies_sync() -> Result<(), String> {
     use std::fs;
     use std::os::windows::process::CommandExt;
@@ -107,75 +232,37 @@ fn install_dependencies_sync() -> Result<(), String> {
 
     info!("Starting automated dependency installation into {:?}", bin_dir);
 
-    // 1. Download yt-dlp.exe
+    // 1. Download and verify yt-dlp.exe
     let ytdlp_path = bin_dir.join("yt-dlp.exe");
     if !ytdlp_path.exists() {
-        info!("Downloading yt-dlp.exe...");
+        info!("Downloading yt-dlp.exe with SHA-256 verification...");
         let url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe";
-        let mut cmd = std::process::Command::new("curl.exe");
-        cmd.creation_flags(CREATE_NO_WINDOW);
-        cmd.arg("-L")
-            .arg("-s")
-            .arg("-o")
-            .arg(&ytdlp_path)
-            .arg(url);
-
-        let status = cmd.status().map_err(|e| format!("Failed to run curl.exe for yt-dlp: {}", e))?;
-        if !status.success() || !ytdlp_path.exists() {
-            // Fallback to powershell Invoke-WebRequest
-            let ps_script = format!(
-                "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '{}' -OutFile '{}'",
-                url, ytdlp_path.display()
-            );
-            let mut ps_cmd = std::process::Command::new("powershell");
-            ps_cmd.creation_flags(CREATE_NO_WINDOW);
-            ps_cmd.arg("-NoProfile").arg("-Command").arg(&ps_script);
-            let ps_status = ps_cmd.status().map_err(|e| format!("PowerShell download failed: {}", e))?;
-            if !ps_status.success() {
-                return Err("Failed to download yt-dlp.exe".to_string());
-            }
-        }
-        info!("yt-dlp.exe downloaded successfully");
+        let checksum_url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS";
+        download_and_verify_sha256(url, &ytdlp_path, checksum_url, Some("yt-dlp.exe"))?;
+        info!("yt-dlp.exe verified and installed successfully");
     }
 
-    // 2. Download & Extract ffmpeg
+    // 2. Download, verify, & extract ffmpeg
     let ffmpeg_path = bin_dir.join("ffmpeg.exe");
     if !ffmpeg_path.exists() {
-        info!("Downloading ffmpeg release archive...");
-        let temp_dir = std::env::temp_dir().join("ytd_setup");
+        info!("Downloading ffmpeg release archive with SHA-256 verification...");
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let temp_dir = std::env::temp_dir().join(format!("ytd_setup_{}_{}", std::process::id(), timestamp));
         let _ = fs::create_dir_all(&temp_dir);
         let zip_path = temp_dir.join("ffmpeg.zip");
 
         let ffmpeg_url = "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip";
-        
-        let mut cmd = std::process::Command::new("curl.exe");
-        cmd.creation_flags(CREATE_NO_WINDOW);
-        cmd.arg("-L")
-            .arg("-s")
-            .arg("-o")
-            .arg(&zip_path)
-            .arg(ffmpeg_url);
-
-        let status = cmd.status().map_err(|e| format!("Failed to run curl.exe for ffmpeg: {}", e))?;
-        if !status.success() || !zip_path.exists() {
-            let ps_script = format!(
-                "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '{}' -OutFile '{}'",
-                ffmpeg_url, zip_path.display()
-            );
-            let mut ps_cmd = std::process::Command::new("powershell");
-            ps_cmd.creation_flags(CREATE_NO_WINDOW);
-            ps_cmd.arg("-NoProfile").arg("-Command").arg(&ps_script);
-            let _ = ps_cmd.status();
-        }
+        let checksum_url = "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/checksums.sha256";
+        download_and_verify_sha256(ffmpeg_url, &zip_path, checksum_url, Some("ffmpeg-master-latest-win64-gpl.zip"))?;
 
         // Extract using tar.exe
-        info!("Extracting ffmpeg binaries...");
+        info!("Extracting verified ffmpeg binaries...");
         let mut tar_cmd = std::process::Command::new("tar.exe");
         tar_cmd.creation_flags(CREATE_NO_WINDOW);
-        tar_cmd.arg("-xf")
-            .arg(&zip_path)
-            .arg("-C")
-            .arg(&temp_dir);
+        tar_cmd.arg("-xf").arg(&zip_path).arg("-C").arg(&temp_dir);
         let _ = tar_cmd.status();
 
         // Search for ffmpeg.exe and ffprobe.exe inside temp_dir and copy to bin_dir
@@ -195,51 +282,36 @@ fn install_dependencies_sync() -> Result<(), String> {
         info!("ffmpeg extracted to {:?}", bin_dir);
     }
 
-    // 3. Download & Extract Deno
+    // 3. Download, verify, & extract Deno
     let deno_path = bin_dir.join("deno.exe");
     if !deno_path.exists() && !is_in_path("deno") {
-        info!("Downloading Deno release archive...");
-        let temp_dir = std::env::temp_dir().join("ytd_deno_setup");
+        info!("Downloading Deno release archive with SHA-256 verification...");
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let temp_dir = std::env::temp_dir().join(format!("ytd_deno_{}_{}", std::process::id(), timestamp));
         let _ = fs::create_dir_all(&temp_dir);
         let zip_path = temp_dir.join("deno.zip");
 
         let deno_url = "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip";
+        let checksum_url = "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip.sha256sum";
+        download_and_verify_sha256(deno_url, &zip_path, checksum_url, None)?;
 
-        let mut cmd = std::process::Command::new("curl.exe");
-        cmd.creation_flags(CREATE_NO_WINDOW);
-        cmd.arg("-L")
-            .arg("-s")
-            .arg("-o")
-            .arg(&zip_path)
-            .arg(deno_url);
-
-        let status = cmd.status().map_err(|e| format!("Failed to run curl.exe for Deno: {}", e))?;
-        if !status.success() || !zip_path.exists() {
-            let ps_script = format!(
-                "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '{}' -OutFile '{}'",
-                deno_url, zip_path.display()
-            );
-            let mut ps_cmd = std::process::Command::new("powershell");
-            ps_cmd.creation_flags(CREATE_NO_WINDOW);
-            ps_cmd.arg("-NoProfile").arg("-Command").arg(&ps_script);
-            let _ = ps_cmd.status();
-        }
-
-        info!("Extracting Deno binary...");
+        info!("Extracting verified Deno binary...");
         let mut tar_cmd = std::process::Command::new("tar.exe");
         tar_cmd.creation_flags(CREATE_NO_WINDOW);
-        tar_cmd.arg("-xf")
-            .arg(&zip_path)
-            .arg("-C")
-            .arg(&temp_dir);
+        tar_cmd.arg("-xf").arg(&zip_path).arg("-C").arg(&temp_dir);
         let _ = tar_cmd.status();
 
         let extracted_deno = temp_dir.join("deno.exe");
         if !extracted_deno.exists() {
-            // Fallback to PowerShell Expand-Archive
+            // Fallback to PowerShell Expand-Archive with escaped path
+            let zip_str = zip_path.display().to_string().replace('\'', "''");
+            let temp_str = temp_dir.display().to_string().replace('\'', "''");
             let ps_script = format!(
                 "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
-                zip_path.display(), temp_dir.display()
+                zip_str, temp_str
             );
             let mut ps_cmd = std::process::Command::new("powershell");
             ps_cmd.creation_flags(CREATE_NO_WINDOW);
@@ -315,20 +387,30 @@ fn update_dependencies_sync() -> Result<DependencyUpdateResult, String> {
         }
         _ => {
             info!("yt-dlp -U unsuccessful, attempting direct download update fallback...");
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis();
+            let temp_ytdlp = bin_dir.join(format!("yt-dlp_update_{}.tmp", timestamp));
             let ytdlp_path = bin_dir.join("yt-dlp.exe");
             let url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe";
-            let mut cmd = std::process::Command::new("curl.exe");
-            cmd.creation_flags(CREATE_NO_WINDOW);
-            cmd.arg("-L").arg("-s").arg("-o").arg(&ytdlp_path).arg(url);
-            if let Ok(status) = cmd.status() {
-                if status.success() && ytdlp_path.exists() {
-                    (true, "Replaced with latest release binary".to_string())
-                } else {
-                    (false, "Update failed".to_string())
+            let checksum_url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS";
+            let res = match download_and_verify_sha256(url, &temp_ytdlp, checksum_url, Some("yt-dlp.exe")) {
+                Ok(_) => {
+                    if let Err(e) = fs::copy(&temp_ytdlp, &ytdlp_path) {
+                        warn!("Failed to replace yt-dlp.exe with updated binary: {}", e);
+                        (false, format!("Failed to install update: {}", e))
+                    } else {
+                        (true, "Replaced with latest release binary (checksum verified)".to_string())
+                    }
                 }
-            } else {
-                (false, "Update failed".to_string())
-            }
+                Err(e) => {
+                    warn!("yt-dlp fallback download/verification failed: {}", e);
+                    (false, format!("Update failed: {}", e))
+                }
+            };
+            let _ = fs::remove_file(&temp_ytdlp);
+            res
         }
     };
 
@@ -353,17 +435,18 @@ fn update_dependencies_sync() -> Result<DependencyUpdateResult, String> {
         }
         _ => {
             info!("deno upgrade unsuccessful, attempting direct download update fallback...");
-            let temp_dir = std::env::temp_dir().join("ytd_deno_update");
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis();
+            let temp_dir = std::env::temp_dir().join(format!("ytd_deno_update_{}_{}", std::process::id(), timestamp));
             let _ = fs::create_dir_all(&temp_dir);
             let zip_path = temp_dir.join("deno.zip");
             let deno_url = "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip";
+            let checksum_url = "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip.sha256sum";
 
-            let mut cmd = std::process::Command::new("curl.exe");
-            cmd.creation_flags(CREATE_NO_WINDOW);
-            cmd.arg("-L").arg("-s").arg("-o").arg(&zip_path).arg(deno_url);
-
-            let res = if let Ok(status) = cmd.status() {
-                if status.success() && zip_path.exists() {
+            let res = match download_and_verify_sha256(deno_url, &zip_path, checksum_url, None) {
+                Ok(_) => {
                     let mut tar_cmd = std::process::Command::new("tar.exe");
                     tar_cmd.creation_flags(CREATE_NO_WINDOW);
                     tar_cmd.arg("-xf").arg(&zip_path).arg("-C").arg(&temp_dir);
@@ -371,9 +454,11 @@ fn update_dependencies_sync() -> Result<DependencyUpdateResult, String> {
 
                     let extracted = temp_dir.join("deno.exe");
                     if !extracted.exists() {
+                        let zip_str = zip_path.display().to_string().replace('\'', "''");
+                        let temp_str = temp_dir.display().to_string().replace('\'', "''");
                         let ps_script = format!(
                             "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
-                            zip_path.display(), temp_dir.display()
+                            zip_str, temp_str
                         );
                         let mut ps_cmd = std::process::Command::new("powershell");
                         ps_cmd.creation_flags(CREATE_NO_WINDOW);
@@ -383,15 +468,15 @@ fn update_dependencies_sync() -> Result<DependencyUpdateResult, String> {
 
                     if extracted.exists() {
                         let _ = fs::copy(&extracted, bin_dir.join("deno.exe"));
-                        (true, "Installed latest release binary".to_string())
+                        (true, "Installed latest release binary (checksum verified)".to_string())
                     } else {
                         (false, "Extraction failed".to_string())
                     }
-                } else {
-                    (false, "Download failed".to_string())
                 }
-            } else {
-                (false, "Download failed".to_string())
+                Err(e) => {
+                    warn!("Deno fallback download/verification failed: {}", e);
+                    (false, format!("Download failed: {}", e))
+                }
             };
             let _ = fs::remove_dir_all(&temp_dir);
             res
@@ -486,5 +571,56 @@ mod tests {
         let json = serde_json::to_string(&res).expect("Serialization failed");
         assert!(json.contains("\"ytdlp_updated\":true"));
         assert!(json.contains("\"deno_updated\":false"));
+    }
+
+    #[test]
+    fn test_extract_sha256_for_asset() {
+        let manifest = r#"
+9174df0b9826f5fc274ef43d4ebadab339d675b28d4fa9fa0e0b3e6eefaa6a4a  yt-dlp
+d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35  yt-dlp.exe
+a1b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef0  yt-dlp_macos
+"#;
+        let hash = extract_sha256_for_asset(manifest, Some("yt-dlp.exe"));
+        assert_eq!(
+            hash,
+            Some("d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35".to_string())
+        );
+
+        let first_hash = extract_sha256_for_asset(manifest, None);
+        assert_eq!(
+            first_hash,
+            Some("9174df0b9826f5fc274ef43d4ebadab339d675b28d4fa9fa0e0b3e6eefaa6a4a".to_string())
+        );
+
+        let missing = extract_sha256_for_asset(manifest, Some("nonexistent.tar.gz"));
+        assert_eq!(missing, None);
+
+        let single_manifest = "f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2  deno.zip\n";
+        let deno_hash = extract_sha256_for_asset(single_manifest, None);
+        assert_eq!(
+            deno_hash,
+            Some("f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2".to_string())
+        );
+    }
+
+    #[test]
+    fn test_compute_file_sha256() {
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join(format!(
+            "ytd_test_hash_{}.txt",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+        ));
+        std::fs::write(&test_file, b"hello world").expect("Write failed");
+
+        let hash = compute_file_sha256(&test_file).expect("Compute failed");
+        assert_eq!(
+            hash,
+            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        );
+
+        let _ = std::fs::remove_file(&test_file);
     }
 }

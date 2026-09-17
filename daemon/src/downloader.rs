@@ -29,7 +29,7 @@ impl Downloader {
             notify_download_started(&req.clean_url, is_music);
 
             let (destination, is_playlist) = {
-                let cfg = config.read().unwrap();
+                let cfg = config.read().unwrap_or_else(|e| e.into_inner());
                 let dest = if is_music {
                     cfg.audio_download_dir.clone()
                 } else {
@@ -113,7 +113,9 @@ impl Downloader {
                 .arg("--embed-metadata")
                 .arg("--embed-thumbnail");
         }
-
+ 
+        // SEC-02: Option terminator ensures clean_url is never parsed as a CLI flag
+        cmd.arg("--");
         cmd.arg(&req.clean_url);
 
         let mut child = cmd
