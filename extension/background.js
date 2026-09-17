@@ -12,7 +12,7 @@ function isValidHttpUrl(urlStr) {
 }
 
 // Setup context menus on installation or update
-chrome.runtime.onInstalled.addListener(() => {
+function setupContextMenus() {
   chrome.contextMenus.removeAll(() => {
     // 1. Context menu when right-clicking any web link (excludes javascript:, mailto:, file:)
     chrome.contextMenus.create({
@@ -30,11 +30,11 @@ chrome.runtime.onInstalled.addListener(() => {
       targetUrlPatterns: ["*://*/*"]
     });
 
-    // 3. Context menu when right-clicking anywhere on YouTube or YT Music pages
+    // 3. Context menu when right-clicking anywhere on YouTube or YT Music pages (background, album art, images, video, text, frames)
     chrome.contextMenus.create({
       id: "ytd-download-page",
       title: "Send Current Page to YTD",
-      contexts: ["page"],
+      contexts: ["page", "image", "video", "audio", "selection", "frame"],
       documentUrlPatterns: [
         "*://*.youtube.com/*",
         "*://youtube.com/*",
@@ -43,7 +43,10 @@ chrome.runtime.onInstalled.addListener(() => {
       ]
     });
   });
-});
+}
+
+chrome.runtime.onInstalled.addListener(setupContextMenus);
+chrome.runtime.onStartup.addListener(setupContextMenus);
 
 // Handle context menu clicks
 chrome.contextMenus.onClicked.addListener((info, tab) => {
@@ -52,7 +55,12 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === "ytd-download-link" && info.linkUrl) {
     targetUrl = info.linkUrl;
   } else if (info.menuItemId === "ytd-download-media" && info.srcUrl) {
-    targetUrl = info.srcUrl;
+    // If media source is a blob or data URL (common on YouTube video/audio players), fallback to page URL
+    if (info.srcUrl.startsWith("blob:") || info.srcUrl.startsWith("data:")) {
+      targetUrl = info.pageUrl || (tab && tab.url);
+    } else {
+      targetUrl = info.srcUrl;
+    }
   } else if (info.menuItemId === "ytd-download-page") {
     targetUrl = info.pageUrl || (tab && tab.url);
   }
