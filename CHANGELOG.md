@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.7](https://github.com/FunToHard/ytd/compare/v1.0.6...v1.0.7) (2026-09-17)
+
+
+### Bug Fixes
+
+* **security:** resolve High severity audit vulnerabilities SEC-01, SEC-02, SEC-03 ([b214341](https://github.com/FunToHard/ytd/commit/b21434157992f1cf03fbdd2dc52daeb51ac97c69))
+* **security:** resolve Low severity findings SEC-09, SEC-10, BUG-04, BUG-05, BUG-06, BUG-07 ([4ff87d4](https://github.com/FunToHard/ytd/commit/4ff87d460e997047c4ee28633b525226360cea76))
+* **security:** resolve Medium severity findings SEC-04, SEC-05, SEC-06, SEC-07, SEC-08, BUG-01, BUG-02 ([e4fc70a](https://github.com/FunToHard/ytd/commit/e4fc70a7d454bb3a699acd562c35c597ee9caf2e))
+
 ## [1.0.6](https://github.com/FunToHard/ytd/compare/v1.0.5...v1.0.6) (2026-09-16)
 
 
