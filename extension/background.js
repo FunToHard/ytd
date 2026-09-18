@@ -14,23 +14,8 @@ function isValidHttpUrl(urlStr) {
 // Setup context menus on installation or update
 function setupContextMenus() {
   chrome.contextMenus.removeAll(() => {
-    // 1. Context menu when right-clicking any web link (excludes javascript:, mailto:, file:)
-    chrome.contextMenus.create({
-      id: "ytd-download-link",
-      title: "Send to YTD",
-      contexts: ["link"],
-      targetUrlPatterns: ["*://*/*"]
-    });
-
-    // 2. Context menu when right-clicking a video or audio player
-    chrome.contextMenus.create({
-      id: "ytd-download-media",
-      title: "Send to YTD",
-      contexts: ["video", "audio"],
-      targetUrlPatterns: ["*://*/*"]
-    });
-
-    // 3. Context menu when right-clicking anywhere on YouTube or YT Music pages (background, album art, images, thumbnails, video, text, frames)
+    // 1. Context menu when right-clicking anywhere on YouTube or YT Music pages (background, album art, images, thumbnails, video, text, frames)
+    // Note: Registered first so Chromium and Microsoft Edge prioritize page/all-level extension context menus and generate submenus on linked elements
     chrome.contextMenus.create({
       id: "ytd-download-page",
       title: "Send Current Page to YTD",
@@ -41,6 +26,22 @@ function setupContextMenus() {
         "*://music.youtube.com/*",
         "*://youtu.be/*"
       ]
+    });
+
+    // 2. Context menu when right-clicking any web link (excludes javascript:, mailto:, file:)
+    chrome.contextMenus.create({
+      id: "ytd-download-link",
+      title: "Send to YTD",
+      contexts: ["link"],
+      targetUrlPatterns: ["*://*/*"]
+    });
+
+    // 3. Context menu when right-clicking a video or audio player
+    chrome.contextMenus.create({
+      id: "ytd-download-media",
+      title: "Send to YTD",
+      contexts: ["video", "audio"],
+      targetUrlPatterns: ["*://*/*"]
     });
   });
 }
