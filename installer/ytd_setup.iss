@@ -4,7 +4,7 @@
 #define MyAppName "YTD"
 #ifndef MyAppVersion
 ; x-release-please-start-version
-#define MyAppVersion "1.0.9"
+#define MyAppVersion "1.0.10"
 ; x-release-please-end
 #endif
 #define MyAppPublisher "YTD Project"
