@@ -25,6 +25,26 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
+      - name: Checkout Release PR Branch
+        if: ${{ steps.release.outputs.pr != '' && steps.release.outputs.pr != 'null' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
+          fetch-depth: 0
+
+      - name: Synchronize and Commit Cargo.lock
+        if: ${{ steps.release.outputs.pr != '' && steps.release.outputs.pr != 'null' }}
+        shell: bash
+        run: |
+          cargo update -p ytd-daemon
+          if [ -n "$(git status --porcelain Cargo.lock)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add Cargo.lock
+            git commit -m "chore: update Cargo.lock"
+            git push origin HEAD:${{ fromJSON(steps.release.outputs.pr).headBranchName }}
+          fi
+
   build-and-publish:
     name: Build & Publish Release Artifacts
     needs: release-please
