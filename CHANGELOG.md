@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/FunToHard/ytd/compare/v1.0.11...v1.1.0) (2026-09-19)
+
+
+### Features
+
+* **desktop:** add Auto Update tray toggle and background automated installer execution ([edad3bf](https://github.com/FunToHard/ytd/commit/edad3bf42581ddafc83789a1991dd4e9d7bcb419))
+
 ## [1.0.11](https://github.com/FunToHard/ytd/compare/v1.0.10...v1.0.11) (2026-09-19)
 
 
