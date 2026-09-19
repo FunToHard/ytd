@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.11](https://github.com/FunToHard/ytd/compare/v1.0.10...v1.0.11) (2026-09-19)
+
+
+### Bug Fixes
+
+* **desktop:** embed PE metadata and synchronize StartupApproved registry for Windows Settings ([7909e1e](https://github.com/FunToHard/ytd/commit/7909e1e5408609dd1e68ffe81ea67103c1c0ef02))
+
 ## [1.0.10](https://github.com/FunToHard/ytd/compare/v1.0.9...v1.0.10) (2026-09-18)
 
 
