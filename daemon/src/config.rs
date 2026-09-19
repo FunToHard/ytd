@@ -19,6 +19,8 @@ pub struct Config {
     pub auto_start: bool,
     #[serde(default = "default_true")]
     pub single_track_default: bool,
+    #[serde(default = "default_true")]
+    pub auto_update: bool,
 }
 
 impl Default for Config {
@@ -47,6 +49,7 @@ impl Default for Config {
             auto_strip_mixes: true,
             auto_start: false,
             single_track_default: true,
+            auto_update: true,
         }
     }
 }
@@ -110,6 +113,11 @@ impl Config {
 
     pub fn update_single_track_default(&mut self, enable: bool) {
         self.single_track_default = enable;
+        self.save();
+    }
+
+    pub fn update_auto_update(&mut self, enable: bool) {
+        self.auto_update = enable;
         self.save();
     }
 }
@@ -381,8 +389,31 @@ mod tests {
         assert!(config.auto_strip_mixes);
         assert!(!config.auto_start);
         assert!(config.single_track_default);
+        assert!(config.auto_update);
         assert!(!config.video_download_dir.as_os_str().is_empty());
         assert!(!config.audio_download_dir.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn test_auto_update_serde() {
+        let json = r#"{
+            "video_download_dir": "C:\\videos",
+            "audio_download_dir": "C:\\music",
+            "port": 48123,
+            "auto_strip_mixes": true
+        }"#;
+        let cfg: Config = serde_json::from_str(json).expect("Deserialization should succeed");
+        assert!(cfg.auto_update);
+
+        let json_disabled = r#"{
+            "video_download_dir": "C:\\videos",
+            "audio_download_dir": "C:\\music",
+            "port": 48123,
+            "auto_strip_mixes": true,
+            "auto_update": false
+        }"#;
+        let cfg_disabled: Config = serde_json::from_str(json_disabled).expect("Deserialization should succeed");
+        assert!(!cfg_disabled.auto_update);
     }
 
     #[test]

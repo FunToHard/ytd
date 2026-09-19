@@ -31,11 +31,12 @@ pub fn run_tray(
     let item_video = MenuItem::new("Open Video Folder", true, None);
     let item_change_video = MenuItem::new("Change Video Download Folder...", true, None);
 
-    let (initial_startup, initial_single_track) = {
+    let (initial_startup, initial_single_track, initial_auto_update) = {
         let cfg = config.read().unwrap_or_else(|e| e.into_inner());
         (
             cfg.auto_start || crate::config::is_auto_start_registered(),
             cfg.single_track_default,
+            cfg.auto_update,
         )
     };
     let item_single_track = CheckMenuItem::new(
@@ -44,6 +45,7 @@ pub fn run_tray(
         initial_single_track,
         None,
     );
+    let item_auto_update = CheckMenuItem::new("Auto Update", true, initial_auto_update, None);
     let item_startup = CheckMenuItem::new("Run at Startup", true, initial_startup, None);
 
     let item_quit = MenuItem::new("Quit YTD Daemon", true, None);
@@ -60,6 +62,7 @@ pub fn run_tray(
     menu.append(&item_change_video)?;
     menu.append(&PredefinedMenuItem::separator())?;
     menu.append(&item_single_track)?;
+    menu.append(&item_auto_update)?;
     menu.append(&item_startup)?;
     menu.append(&PredefinedMenuItem::separator())?;
     menu.append(&item_quit)?;
@@ -191,7 +194,8 @@ pub fn run_tray(
                 } else if event.id == item_install_ext.id() {
                     crate::deps::open_extension_helper();
                 } else if event.id == item_update.id() {
-                    std::thread::spawn(|| {
+                    let cfg_for_update = config.clone();
+                    std::thread::spawn(move || {
                         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build();
                         if let Ok(rt) = rt {
                             rt.block_on(async {
@@ -209,19 +213,29 @@ pub fn run_tray(
                                 match engine.check_for_updates().await {
                                     Ok(Some(release)) => {
                                         let tag = &release.tag_name;
-                                        let notes = release.body.as_deref().unwrap_or("No release notes provided.");
-                                        let prompt = format!(
-                                            "A new version of YTD ({}) is available!\n\nRelease Notes:\n{}\n\nWould you like to download and install this update now?",
-                                            tag, notes
-                                        );
+                                        let is_auto_update_enabled = {
+                                            let cfg = cfg_for_update.read().unwrap_or_else(|e| e.into_inner());
+                                            cfg.auto_update
+                                        };
 
-                                        let answer = rfd::MessageDialog::new()
-                                            .set_title("YTD - Update Available")
-                                            .set_description(&prompt)
-                                            .set_buttons(rfd::MessageButtons::YesNo)
-                                            .show();
+                                        let should_install = if is_auto_update_enabled {
+                                            true
+                                        } else {
+                                            let notes = release.body.as_deref().unwrap_or("No release notes provided.");
+                                            let prompt = format!(
+                                                "A new version of YTD ({}) is available!\n\nRelease Notes:\n{}\n\nWould you like to download and install this update now?",
+                                                tag, notes
+                                            );
 
-                                        if answer == rfd::MessageDialogResult::Yes {
+                                            let answer = rfd::MessageDialog::new()
+                                                .set_title("YTD - Update Available")
+                                                .set_description(&prompt)
+                                                .set_buttons(rfd::MessageButtons::YesNo)
+                                                .show();
+                                            answer == rfd::MessageDialogResult::Yes
+                                        };
+
+                                        if should_install {
                                             crate::notifier::notify_info("YTD Updater", &format!("Downloading {} update...", tag));
                                             match engine.download_update(&release, None).await {
                                                 Ok(update_file) => {
@@ -291,6 +305,11 @@ pub fn run_tray(
                     info!("Single track default setting toggled to: {}", is_checked);
                     let mut cfg = config.write().unwrap_or_else(|e| e.into_inner());
                     cfg.update_single_track_default(is_checked);
+                } else if event.id == item_auto_update.id() {
+                    let is_checked = item_auto_update.is_checked();
+                    info!("Auto update setting toggled to: {}", is_checked);
+                    let mut cfg = config.write().unwrap_or_else(|e| e.into_inner());
+                    cfg.update_auto_update(is_checked);
                 } else if event.id == item_startup.id() {
                     let is_checked = item_startup.is_checked();
                     info!("Startup setting toggled to: {}", is_checked);

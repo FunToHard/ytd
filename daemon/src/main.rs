@@ -105,7 +105,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Spawn Background Auto-Update Check
-    rt.spawn(async {
+    let config_updater = config.clone();
+    rt.spawn(async move {
         use github_auto_updater::{AutoUpdaterEngine, UpdateOptions};
         use std::time::Duration;
 
@@ -126,7 +127,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         while let Some(event) = rx_events.recv().await {
             if let github_auto_updater::UpdateEvent::UpdateAvailable(release) = event {
-                notifier::notify_update_available(&release.tag_name);
+                let is_auto_update = {
+                    let cfg = config_updater.read().unwrap_or_else(|e| e.into_inner());
+                    cfg.auto_update
+                };
+
+                if is_auto_update {
+                    info!("Auto-update enabled: automatically downloading update {}", release.tag_name);
+
+                    // Wait for any active downloads to complete before applying update
+                    while !downloader::Downloader::get_active_downloads().is_empty() {
+                        info!("Active downloads in progress; deferring auto-update by 15 seconds...");
+                        tokio::time::sleep(Duration::from_secs(15)).await;
+                    }
+
+                    notifier::notify_info(
+                        "YTD Auto-Update",
+                        &format!("Downloading YTD {} update in background...", release.tag_name),
+                    );
+
+                    match engine.download_update(&release, None).await {
+                        Ok(update_file) => {
+                            while !downloader::Downloader::get_active_downloads().is_empty() {
+                                tokio::time::sleep(Duration::from_secs(10)).await;
+                            }
+
+                            notifier::notify_info("YTD Auto-Update", "Applying update and restarting...");
+                            tokio::time::sleep(Duration::from_millis(500)).await;
+                            if let Err(e) = engine.apply_update(&update_file) {
+                                error!("Failed to apply auto-update: {}", e);
+                                notifier::notify_info("YTD Auto-Update Error", &format!("Failed to apply update: {}", e));
+                            } else {
+                                info!("Auto-update installer spawned. Exiting process to release file lock.");
+                                std::process::exit(0);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Auto-update download failed: {}", e);
+                            notifier::notify_update_available(&release.tag_name);
+                        }
+                    }
+                } else {
+                    notifier::notify_update_available(&release.tag_name);
+                }
             }
         }
     });
