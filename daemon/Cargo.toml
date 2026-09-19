@@ -1,6 +1,6 @@
 [package]
 name = "ytd-daemon"
-version = "1.0.10"
+version = "1.0.11"
 edition = "2021"
 license = "MIT"
 description = "YTD - YouTube & YT Music Downloader Desktop Daemon"
