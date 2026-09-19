@@ -210,6 +210,55 @@ pub fn set_auto_start_registry(enable: bool) -> Result<(), String> {
             }
         };
 
+        let approved_subkey = to_wide(r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run");
+        let mut approved_hkey = std::ptr::null_mut();
+        if enable {
+            use windows_sys::Win32::System::Registry::REG_BINARY;
+            let approved_status = unsafe {
+                RegCreateKeyExW(
+                    HKEY_CURRENT_USER,
+                    approved_subkey.as_ptr(),
+                    0,
+                    std::ptr::null(),
+                    REG_OPTION_RESERVED,
+                    KEY_SET_VALUE,
+                    std::ptr::null(),
+                    &mut approved_hkey,
+                    std::ptr::null_mut(),
+                )
+            };
+            if approved_status == ERROR_SUCCESS {
+                let enabled_bytes: [u8; 12] = [0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+                unsafe {
+                    RegSetValueExW(
+                        approved_hkey,
+                        val_name.as_ptr(),
+                        0,
+                        REG_BINARY,
+                        enabled_bytes.as_ptr(),
+                        enabled_bytes.len() as u32,
+                    );
+                    RegCloseKey(approved_hkey);
+                }
+            }
+        } else {
+            let approved_status = unsafe {
+                RegOpenKeyExW(
+                    HKEY_CURRENT_USER,
+                    approved_subkey.as_ptr(),
+                    0,
+                    KEY_SET_VALUE,
+                    &mut approved_hkey,
+                )
+            };
+            if approved_status == ERROR_SUCCESS {
+                unsafe {
+                    RegDeleteValueW(approved_hkey, val_name.as_ptr());
+                    RegCloseKey(approved_hkey);
+                }
+            }
+        }
+
         unsafe { RegCloseKey(hkey) };
         cleanup_legacy_corrupted_keys();
         result
@@ -259,7 +308,45 @@ pub fn is_auto_start_registered() -> bool {
         };
 
         unsafe { RegCloseKey(hkey) };
-        query_status == ERROR_SUCCESS
+        if query_status != ERROR_SUCCESS {
+            return false;
+        }
+
+        // Check if Windows Settings or Task Manager disabled it in StartupApproved\Run
+        let approved_subkey = to_wide(r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run");
+        let mut approved_hkey = std::ptr::null_mut();
+        let app_status = unsafe {
+            RegOpenKeyExW(
+                HKEY_CURRENT_USER,
+                approved_subkey.as_ptr(),
+                0,
+                KEY_QUERY_VALUE,
+                &mut approved_hkey,
+            )
+        };
+        if app_status == ERROR_SUCCESS {
+            let mut data = [0u8; 12];
+            let mut data_len = data.len() as u32;
+            let query_app = unsafe {
+                RegQueryValueExW(
+                    approved_hkey,
+                    val_name.as_ptr(),
+                    std::ptr::null(),
+                    std::ptr::null_mut(),
+                    data.as_mut_ptr(),
+                    &mut data_len,
+                )
+            };
+            unsafe { RegCloseKey(approved_hkey) };
+            if query_app == ERROR_SUCCESS && data_len > 0 {
+                // If lowest bit of first byte is set (e.g. 0x01 or 0x03), disabled in Windows Settings
+                if (data[0] & 1) != 0 {
+                    return false;
+                }
+            }
+        }
+
+        true
     }
     #[cfg(not(windows))]
     false

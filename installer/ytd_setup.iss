@@ -46,6 +46,8 @@ Name: "autostart"; Description: "Start YTD automatically when Windows starts"; G
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "YTD"; ValueData: """{app}\{#MyAppExeName}"""; Flags: uninsdeletevalue; Tasks: autostart
 ; Clean up YTD auto-start entry on uninstall even if enabled via tray menu
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: "YTD"; Flags: dontcreatekey uninsdeletevalue
+; Clean up Windows Settings StartupApproved entry on uninstall
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"; ValueName: "YTD"; Flags: dontcreatekey uninsdeletevalue
 ; Clean up legacy corrupted keys created by prior builds
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"""; Flags: dontcreatekey uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\AppUserModelId\YTD"""; Flags: dontcreatekey uninsdeletekey
