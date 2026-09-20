@@ -159,13 +159,15 @@ pub fn sanitize_url(raw: &str) -> Result<SanitizedRequest, String> {
         let path = parsed.path();
         let mut clean_url = format!("{}://{}{}", scheme, host, path);
         if !clean_query_pairs.is_empty() {
-            let query_str = clean_query_pairs
-                .iter()
-                .map(|(k, v)| format!("{}={}", k, v))
-                .collect::<Vec<_>>()
-                .join("&");
             clean_url.push('?');
-            clean_url.push_str(&query_str);
+            for (i, (k, v)) in clean_query_pairs.iter().enumerate() {
+                if i > 0 {
+                    clean_url.push('&');
+                }
+                clean_url.push_str(k);
+                clean_url.push('=');
+                clean_url.push_str(v);
+            }
         }
         clean_url
     } else {
