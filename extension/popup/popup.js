@@ -36,7 +36,7 @@ document.addEventListener("DOMContentLoaded", () => {
   loadHistory();
   fetchActiveDownloads();
   const pollTimer = setInterval(fetchActiveDownloads, 1000);
-  window.addEventListener("unload", () => clearInterval(pollTimer));
+  window.addEventListener("pagehide", () => clearInterval(pollTimer));
 
   // 1-Click install dependencies handler
   installDepsBtn.addEventListener("click", async () => {
@@ -107,10 +107,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Clear history
-  clearHistoryBtn.addEventListener("click", async () => {
-    await chrome.storage.local.set({ downloadHistory: [] });
-    loadHistory();
+  // Clear history via serialized background worker
+  clearHistoryBtn.addEventListener("click", () => {
+    chrome.runtime.sendMessage({ action: "clearHistory" }, () => {
+      loadHistory();
+    });
   });
 
   async function checkDaemonStatus() {
@@ -151,6 +152,11 @@ document.addEventListener("DOMContentLoaded", () => {
           const depsData = await depsRes.json();
           if (depsData.data && !depsData.data.all_ready) {
             depsWarning.classList.remove("hidden");
+            if (depsData.data.is_installing) {
+              installDepsBtn.disabled = true;
+              installDepsBtn.textContent = "Installing yt-dlp, ffmpeg & Deno...";
+              pollDependencyInstallation();
+            }
           } else {
             depsWarning.classList.add("hidden");
           }
@@ -273,85 +279,141 @@ document.addEventListener("DOMContentLoaded", () => {
       cancelAllBtn.classList.add("hidden");
     }
 
-    activeDownloadsList.innerHTML = "";
+    // Set of active IDs in current poll
+    const activeIds = new Set(downloads.map((d) => String(d.id)));
+
+    // 1. Remove obsolete DOM items
+    const existingElements = activeDownloadsList.querySelectorAll(".active-item");
+    existingElements.forEach((el) => {
+      if (!activeIds.has(el.dataset.id)) {
+        el.remove();
+      }
+    });
+
+    // 2. Insert or update items
     downloads.forEach((item) => {
-      const itemEl = document.createElement("div");
-      itemEl.className = "active-item";
-
-      const topRow = document.createElement("div");
-      topRow.className = "active-item-top";
-
-      const infoDiv = document.createElement("div");
-      infoDiv.className = "active-item-info";
-
-      const titleSpan = document.createElement("span");
-      titleSpan.className = "active-item-title";
-      titleSpan.textContent = item.title || item.clean_url;
-      titleSpan.title = item.title || item.clean_url;
-
-      const targetSpan = document.createElement("span");
-      targetSpan.className = "active-item-target";
-      targetSpan.textContent = item.target === "music_audio" ? "🎵 MP3" : "🎬 MP4";
-
-      infoDiv.appendChild(titleSpan);
-      infoDiv.appendChild(targetSpan);
-
-      const cancelBtn = document.createElement("button");
-      cancelBtn.className = "btn-cancel-item";
-      cancelBtn.textContent = "✕ Cancel";
-      cancelBtn.title = "Cancel download";
-      cancelBtn.addEventListener("click", () => cancelSingleDownload(item.id, item.title));
-
-      topRow.appendChild(infoDiv);
-      topRow.appendChild(cancelBtn);
-
-      const barBg = document.createElement("div");
-      barBg.className = "progress-bar-bg";
-
-      const barFill = document.createElement("div");
-      barFill.className = "progress-bar-fill";
+      const idStr = String(item.id);
+      let itemEl = activeDownloadsList.querySelector(`.active-item[data-id="${idStr}"]`);
 
       let statusText = "Downloading...";
+      let progressWidth = "0%";
+      let isIndeterminate = false;
 
       if (item.status === "queued") {
         statusText = "Queued in line...";
-        barFill.style.width = "0%";
+        progressWidth = "0%";
       } else if (item.status === "converting") {
         statusText = "Converting media...";
-        barFill.classList.add("indeterminate");
+        isIndeterminate = true;
       } else if (item.status === "cancelled") {
         statusText = "Cancelling...";
-        barFill.style.width = "100%";
+        progressWidth = "100%";
       } else {
-        if (typeof item.progress_percent === "number") {
-          const pct = Math.min(100, Math.max(0, item.progress_percent));
-          statusText = `Downloading ${pct.toFixed(1)}%`;
-          barFill.style.width = `${pct}%`;
+        const pctVal = typeof item.progress === "number" ? item.progress : item.progress_percent;
+        if (typeof pctVal === "number") {
+          const pct = Math.min(100, Math.max(0, pctVal));
+          statusText = `Downloading ${pct.toFixed(0)}%`;
+          progressWidth = `${pct}%`;
         } else {
           statusText = "Downloading...";
-          barFill.classList.add("indeterminate");
+          isIndeterminate = true;
         }
       }
 
-      barBg.appendChild(barFill);
+      if (itemEl) {
+        // Update in-place
+        const titleSpan = itemEl.querySelector(".active-item-title");
+        if (titleSpan) {
+          const displayTitle = item.title || item.clean_url;
+          if (titleSpan.textContent !== displayTitle) {
+            titleSpan.textContent = displayTitle;
+            titleSpan.title = displayTitle;
+          }
+        }
 
-      const statusRow = document.createElement("div");
-      statusRow.className = "active-item-status";
+        const barFill = itemEl.querySelector(".progress-bar-fill");
+        if (barFill) {
+          if (isIndeterminate) {
+            barFill.classList.add("indeterminate");
+            barFill.style.width = "";
+          } else {
+            barFill.classList.remove("indeterminate");
+            barFill.style.width = progressWidth;
+          }
+        }
 
-      const statusDesc = document.createElement("span");
-      statusDesc.className = "status-detail";
-      statusDesc.textContent = statusText;
+        const statusDesc = itemEl.querySelector(".status-detail");
+        if (statusDesc && statusDesc.textContent !== statusText) {
+          statusDesc.textContent = statusText;
+        }
 
-      const statusBadge = document.createElement("span");
-      statusBadge.textContent = item.status.toUpperCase();
+        const statusBadge = itemEl.querySelector(".active-item-status span:last-child");
+        if (statusBadge && statusBadge.textContent !== item.status.toUpperCase()) {
+          statusBadge.textContent = item.status.toUpperCase();
+        }
+      } else {
+        // Create new item
+        itemEl = document.createElement("div");
+        itemEl.className = "active-item";
+        itemEl.dataset.id = idStr;
 
-      statusRow.appendChild(statusDesc);
-      statusRow.appendChild(statusBadge);
+        const topRow = document.createElement("div");
+        topRow.className = "active-item-top";
 
-      itemEl.appendChild(topRow);
-      itemEl.appendChild(barBg);
-      itemEl.appendChild(statusRow);
-      activeDownloadsList.appendChild(itemEl);
+        const infoDiv = document.createElement("div");
+        infoDiv.className = "active-item-info";
+
+        const titleSpan = document.createElement("span");
+        titleSpan.className = "active-item-title";
+        titleSpan.textContent = item.title || item.clean_url;
+        titleSpan.title = item.title || item.clean_url;
+
+        const targetSpan = document.createElement("span");
+        targetSpan.className = "active-item-target";
+        targetSpan.textContent = item.target === "music_audio" ? "🎵 MP3" : "🎬 MP4";
+
+        infoDiv.appendChild(titleSpan);
+        infoDiv.appendChild(targetSpan);
+
+        const cancelBtn = document.createElement("button");
+        cancelBtn.className = "btn-cancel-item";
+        cancelBtn.textContent = "✕ Cancel";
+        cancelBtn.title = "Cancel download";
+        cancelBtn.addEventListener("click", () => cancelSingleDownload(item.id, item.title));
+
+        topRow.appendChild(infoDiv);
+        topRow.appendChild(cancelBtn);
+
+        const barBg = document.createElement("div");
+        barBg.className = "progress-bar-bg";
+
+        const barFill = document.createElement("div");
+        barFill.className = "progress-bar-fill";
+        if (isIndeterminate) {
+          barFill.classList.add("indeterminate");
+        } else {
+          barFill.style.width = progressWidth;
+        }
+        barBg.appendChild(barFill);
+
+        const statusRow = document.createElement("div");
+        statusRow.className = "active-item-status";
+
+        const statusDesc = document.createElement("span");
+        statusDesc.className = "status-detail";
+        statusDesc.textContent = statusText;
+
+        const statusBadge = document.createElement("span");
+        statusBadge.textContent = item.status.toUpperCase();
+
+        statusRow.appendChild(statusDesc);
+        statusRow.appendChild(statusBadge);
+
+        itemEl.appendChild(topRow);
+        itemEl.appendChild(barBg);
+        itemEl.appendChild(statusRow);
+        activeDownloadsList.appendChild(itemEl);
+      }
     });
   }
 

@@ -47,7 +47,6 @@ function setupContextMenus() {
 }
 
 chrome.runtime.onInstalled.addListener(setupContextMenus);
-chrome.runtime.onStartup.addListener(setupContextMenus);
 
 // Handle context menu clicks
 chrome.contextMenus.onClicked.addListener((info, tab) => {
@@ -91,6 +90,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .then(res => sendResponse(res))
       .catch(err => sendResponse({ success: false, error: err.message }));
     return true; // async response
+  } else if (request.action === "clearHistory") {
+    historyQueue = historyQueue.then(async () => {
+      try {
+        await chrome.storage.local.set({ downloadHistory: [] });
+        sendResponse({ success: true });
+      } catch (e) {
+        sendResponse({ success: false, error: e.message });
+      }
+    });
+    return true;
   }
 });
 
