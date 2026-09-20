@@ -147,7 +147,7 @@ impl DownloadTracker {
         active
     }
 
-    fn cancel_task(&self, id: u64) -> Option<(String, PathBuf, Option<String>)> {
+    fn cancel_task(&self, id: u64) -> Option<(String, PathBuf, Option<String>, Option<u32>)> {
         let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(task) = tasks.get_mut(&id) {
             if matches!(task.status, DownloadStatus::Queued | DownloadStatus::Downloading | DownloadStatus::Converting) {
@@ -155,16 +155,13 @@ impl DownloadTracker {
                 if let Some(tx) = task.cancel_tx.take() {
                     let _ = tx.send(());
                 }
-                if let Some(pid) = task.child_pid {
-                    kill_process_tree(pid);
-                }
-                return Some((task.title.clone(), task.dest_dir.clone(), task.video_id.clone()));
+                return Some((task.title.clone(), task.dest_dir.clone(), task.video_id.clone(), task.child_pid));
             }
         }
         None
     }
 
-    fn cancel_all(&self) -> Vec<(u64, String, PathBuf, Option<String>)> {
+    fn cancel_all(&self) -> Vec<(u64, String, PathBuf, Option<String>, Option<u32>)> {
         let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         let mut cancelled = Vec::new();
         for task in tasks.values_mut() {
@@ -173,10 +170,7 @@ impl DownloadTracker {
                 if let Some(tx) = task.cancel_tx.take() {
                     let _ = tx.send(());
                 }
-                if let Some(pid) = task.child_pid {
-                    kill_process_tree(pid);
-                }
-                cancelled.push((task.id, task.title.clone(), task.dest_dir.clone(), task.video_id.clone()));
+                cancelled.push((task.id, task.title.clone(), task.dest_dir.clone(), task.video_id.clone(), task.child_pid));
             }
         }
         cancelled
@@ -328,6 +322,17 @@ fn cleanup_partial_files(dest_dir: &Path, video_id: Option<&str>, title: &str) {
     }
 }
 
+struct ActiveDownloadGuard {
+    task_id: u64,
+}
+
+impl Drop for ActiveDownloadGuard {
+    fn drop(&mut self) {
+        ACTIVE_DOWNLOADS.fetch_sub(1, Ordering::SeqCst);
+        get_tracker().remove_task(self.task_id);
+    }
+}
+
 pub struct Downloader;
 
 impl Downloader {
@@ -391,6 +396,7 @@ impl Downloader {
 
             QUEUED_DOWNLOADS.fetch_sub(1, Ordering::SeqCst);
             ACTIVE_DOWNLOADS.fetch_add(1, Ordering::SeqCst);
+            let _active_guard = ActiveDownloadGuard { task_id };
             get_tracker().update_task_status(task_id, DownloadStatus::Downloading);
 
             notify_download_started(&req.clean_url, is_music);
@@ -427,16 +433,17 @@ impl Downloader {
                 }
             }
 
-            ACTIVE_DOWNLOADS.fetch_sub(1, Ordering::SeqCst);
-            get_tracker().remove_task(task_id);
-            // _permit dropped here
+            // _active_guard and _permit automatically dropped here
         });
 
         Ok(task_id)
     }
 
     pub fn cancel_download(id: u64) -> bool {
-        if let Some((title, dest_dir, video_id)) = get_tracker().cancel_task(id) {
+        if let Some((title, dest_dir, video_id, pid)) = get_tracker().cancel_task(id) {
+            if let Some(p) = pid {
+                kill_process_tree(p);
+            }
             cleanup_partial_files(&dest_dir, video_id.as_deref(), &title);
             notify_download_cancelled(&title);
             true
@@ -448,7 +455,10 @@ impl Downloader {
     pub fn cancel_all_downloads() -> usize {
         let cancelled = get_tracker().cancel_all();
         let count = cancelled.len();
-        for (_id, title, dest_dir, video_id) in cancelled {
+        for (_id, title, dest_dir, video_id, pid) in cancelled {
+            if let Some(p) = pid {
+                kill_process_tree(p);
+            }
             cleanup_partial_files(&dest_dir, video_id.as_deref(), &title);
         }
         if count > 0 {
@@ -562,9 +572,6 @@ impl Downloader {
                 _ = &mut cancel_rx => {
                     info!("Cancellation signal received for task {}", task_id);
                     was_cancelled = true;
-                    if let Some(p) = pid {
-                        kill_process_tree(p);
-                    }
                     let _ = child.kill().await;
                     cleanup_partial_files(dest_dir, req.video_id.as_deref(), &captured_title);
                     break;
