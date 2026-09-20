@@ -202,6 +202,11 @@ fn is_private_or_local_host(host: &str) -> bool {
     if clean_host == "localhost"
         || clean_host.ends_with(".localhost")
         || clean_host.ends_with(".local")
+        || clean_host.ends_with(".localtest.me")
+        || clean_host == "localtest.me"
+        || clean_host.ends_with(".nip.io")
+        || clean_host.ends_with(".vcap.me")
+        || clean_host.ends_with(".lvh.me")
         || clean_host == "0.0.0.0"
         || clean_host == "::1"
     {
@@ -218,7 +223,22 @@ fn is_private_or_local_host(host: &str) -> bool {
                     || ipv4.is_broadcast()
             }
             std::net::IpAddr::V6(ipv6) => {
-                ipv6.is_loopback() || ipv6.is_unspecified()
+                if ipv6.is_loopback() || ipv6.is_unspecified() {
+                    return true;
+                }
+                // Check IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1)
+                if let Some(ipv4) = ipv6.to_ipv4_mapped() {
+                    return ipv4.is_loopback()
+                        || ipv4.is_private()
+                        || ipv4.is_link_local()
+                        || ipv4.is_unspecified()
+                        || ipv4.is_broadcast();
+                }
+                // Check IPv6 unique local (fc00::/7) and link-local (fe80::/10)
+                let segments = ipv6.segments();
+                let is_unique_local = (segments[0] & 0xfe00) == 0xfc00;
+                let is_link_local = (segments[0] & 0xffc0) == 0xfe80;
+                is_unique_local || is_link_local
             }
         }
     } else {
@@ -319,5 +339,10 @@ mod tests {
         assert!(sanitize_url("http://10.0.0.1/video.mp4").is_err());
         assert!(sanitize_url("http://169.254.169.254/latest/meta-data").is_err());
         assert!(sanitize_url("http://[::1]/video.mp4").is_err());
+        assert!(sanitize_url("http://[::ffff:127.0.0.1]/test").is_err());
+        assert!(sanitize_url("http://[fe80::1]/test").is_err());
+        assert!(sanitize_url("http://[fc00::1]/test").is_err());
+        assert!(sanitize_url("http://localtest.me/test").is_err());
+        assert!(sanitize_url("http://127.0.0.1.nip.io/test").is_err());
     }
 }

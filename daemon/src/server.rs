@@ -2,7 +2,7 @@ use crate::config::SharedConfig;
 use crate::downloader::{get_active_downloads_count, get_queued_downloads_count, Downloader};
 use crate::sanitizer::{sanitize_url, DownloadTarget};
 use axum::{
-    extract::State,
+    extract::{DefaultBodyLimit, State},
     http::{
         header::{HeaderName, CONTENT_TYPE},
         Method, StatusCode,
@@ -109,7 +109,9 @@ pub async fn run_server(config: SharedConfig) -> Result<(), Box<dyn std::error::
         .route("/dependencies/status", get(deps_status_handler))
         .route("/dependencies/install", post(deps_install_handler))
         .route("/dependencies/update", post(deps_update_handler))
+        .layer(DefaultBodyLimit::max(64 * 1024))
         .layer(cors)
+        .layer(from_fn(validate_host_header))
         .layer(from_fn(validate_client_header))
         .with_state(state);
 
@@ -122,12 +124,59 @@ pub async fn run_server(config: SharedConfig) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
+async fn validate_host_header(
+    req: axum::extract::Request,
+    next: Next,
+) -> Result<Response, (StatusCode, Json<ApiResponse<()>>)> {
+    let host = req
+        .headers()
+        .get("host")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("");
+
+    if is_valid_local_host(host) {
+        Ok(next.run(req).await)
+    } else {
+        Err((
+            StatusCode::FORBIDDEN,
+            Json(ApiResponse {
+                success: false,
+                data: None,
+                error: Some("Access denied: invalid Host header (DNS rebinding protection)".to_string()),
+            }),
+        ))
+    }
+}
+
+pub fn is_valid_local_host(host: &str) -> bool {
+    let clean = host.trim();
+    if clean.is_empty() {
+        return false;
+    }
+
+    let host_part = if clean.starts_with('[') {
+        // IPv6 literal: [::1] or [::1]:48123
+        if let Some(end_bracket) = clean.find(']') {
+            &clean[1..end_bracket]
+        } else {
+            return false;
+        }
+    } else if let Some((h, _port)) = clean.rsplit_once(':') {
+        // e.g. "127.0.0.1:48123" or "localhost:48123"
+        h
+    } else {
+        clean
+    };
+
+    host_part == "127.0.0.1" || host_part == "localhost" || host_part == "::1"
+}
+
 async fn validate_client_header(
     req: axum::extract::Request,
     next: Next,
 ) -> Result<Response, (StatusCode, Json<ApiResponse<()>>)> {
-    // /health endpoint is exempt to allow simple daemon ping checks
-    if req.uri().path() == "/health" {
+    // OPTIONS preflight requests and /health are exempt
+    if req.method() == Method::OPTIONS || req.uri().path() == "/health" {
         return Ok(next.run(req).await);
     }
 
@@ -380,5 +429,20 @@ mod tests {
         let json = serde_json::to_string(&res).unwrap();
         assert!(json.contains("\"cancelled_count\":2"));
         assert!(json.contains("Cancelled 2 download(s)"));
+    }
+
+    #[test]
+    fn test_host_header_validation() {
+        assert!(is_valid_local_host("127.0.0.1:48123"));
+        assert!(is_valid_local_host("localhost:48123"));
+        assert!(is_valid_local_host("[::1]:48123"));
+        assert!(is_valid_local_host("[::1]"));
+        assert!(is_valid_local_host("127.0.0.1"));
+        assert!(is_valid_local_host("localhost"));
+
+        // Rebinding / external hosts must be rejected
+        assert!(!is_valid_local_host("evil.com:48123"));
+        assert!(!is_valid_local_host("rebind.attacker.com"));
+        assert!(!is_valid_local_host("192.168.1.100:48123"));
     }
 }
