@@ -99,6 +99,7 @@ pub fn run_tray(
                     &menu,
                     &mut download_menu_items,
                     &mut cancel_all_item,
+                    &item_deps,
                 );
             }
 
@@ -117,6 +118,7 @@ pub fn run_tray(
                         &menu,
                         &mut download_menu_items,
                         &mut cancel_all_item,
+                        &item_deps,
                     );
                     continue;
                 }
@@ -128,6 +130,7 @@ pub fn run_tray(
                             &menu,
                             &mut download_menu_items,
                             &mut cancel_all_item,
+                            &item_deps,
                         );
                         continue;
                     }
@@ -333,7 +336,14 @@ fn refresh_download_menu_items(
     menu: &Menu,
     download_menu_items: &mut Vec<(u64, MenuItem)>,
     cancel_all_item: &mut Option<MenuItem>,
+    item_deps: &MenuItem,
 ) {
+    // 0. Dynamically update dependency readiness if dependencies became ready
+    if crate::deps::check_dependencies().all_ready {
+        item_deps.set_text("✓ Dependencies: Ready");
+        item_deps.set_enabled(false);
+    }
+
     let active_list = crate::downloader::Downloader::get_active_downloads();
 
     // 1. Update or remove existing items
@@ -387,6 +397,7 @@ mod tests {
     fn test_tray_menu_structure() {
         let menu = Menu::new();
         let item_status = MenuItem::new("YTD Daemon: Online", false, None);
+        let item_deps = MenuItem::new("⚠️ Install Dependencies", true, None);
         let sep = PredefinedMenuItem::separator();
         menu.append(&item_status).unwrap();
         menu.append(&sep).unwrap();
@@ -395,7 +406,7 @@ mod tests {
         let mut cancel_all_item = None;
 
         // Initially no active downloads
-        refresh_download_menu_items(&menu, &mut download_menu_items, &mut cancel_all_item);
+        refresh_download_menu_items(&menu, &mut download_menu_items, &mut cancel_all_item, &item_deps);
         assert_eq!(download_menu_items.len(), 0);
         assert!(cancel_all_item.is_none());
         assert_eq!(menu.items().len(), 2);

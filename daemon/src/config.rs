@@ -87,8 +87,11 @@ impl Config {
 
     pub fn save(&self) {
         let path = Self::config_file_path();
+        let tmp_path = path.with_extension("tmp");
         if let Ok(json) = serde_json::to_string_pretty(self) {
-            let _ = fs::write(path, json);
+            if fs::write(&tmp_path, json).is_ok() {
+                let _ = fs::rename(&tmp_path, &path);
+            }
         }
     }
 
