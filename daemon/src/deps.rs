@@ -104,7 +104,7 @@ pub fn compute_file_sha256(path: &std::path::Path) -> Result<String, String> {
     let mut file = std::fs::File::open(path)
         .map_err(|e| format!("Failed to open file for checksum calculation: {}", e))?;
     let mut hasher = Sha256::new();
-    let mut buffer = [0u8; 65536];
+    let mut buffer = vec![0u8; 65536];
     loop {
         let bytes_read = file.read(&mut buffer)
             .map_err(|e| format!("Error reading file during hash calculation: {}", e))?;
@@ -250,13 +250,24 @@ fn install_dependencies_sync() -> Result<(), String> {
 
     info!("Starting automated dependency installation into {:?}", bin_dir);
 
-    // 1. Download and verify yt-dlp.exe
+    // 1. Download and verify yt-dlp.exe atomically
     let ytdlp_path = bin_dir.join("yt-dlp.exe");
     if !ytdlp_path.exists() {
         info!("Downloading yt-dlp.exe with SHA-256 verification...");
         let url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe";
         let checksum_url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS";
-        download_and_verify_sha256(url, &ytdlp_path, checksum_url, Some("yt-dlp.exe"))?;
+        let temp_ytdlp = bin_dir.join(format!(
+            "yt-dlp_{}.tmp",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()
+        ));
+        if let Err(e) = download_and_verify_sha256(url, &temp_ytdlp, checksum_url, Some("yt-dlp.exe")) {
+            let _ = fs::remove_file(&temp_ytdlp);
+            return Err(e);
+        }
+        if let Err(e) = fs::rename(&temp_ytdlp, &ytdlp_path) {
+            let _ = fs::remove_file(&temp_ytdlp);
+            return Err(format!("Failed to move verified yt-dlp.exe into destination: {}", e));
+        }
         info!("yt-dlp.exe verified and installed successfully");
     }
 
@@ -291,8 +302,39 @@ fn install_dependencies_sync() -> Result<(), String> {
             }
         }
 
+        // If tar extraction didn't yield ffmpeg.exe, try PowerShell fallback
+        if !ffmpeg_path.exists() {
+            let zip_str = zip_path.display().to_string().replace('\'', "''");
+            let temp_str = temp_dir.display().to_string().replace('\'', "''");
+            let ps_script = format!(
+                "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+                zip_str, temp_str
+            );
+            let mut ps_cmd = std::process::Command::new("powershell");
+            ps_cmd.creation_flags(CREATE_NO_WINDOW);
+            ps_cmd.arg("-NoProfile").arg("-Command").arg(&ps_script);
+            let _ = ps_cmd.status();
+
+            if let Ok(entries) = fs::read_dir(&temp_dir) {
+                for entry in entries.flatten() {
+                    if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                        let sub_bin = entry.path().join("bin");
+                        if sub_bin.exists() {
+                            let _ = fs::copy(sub_bin.join("ffmpeg.exe"), bin_dir.join("ffmpeg.exe"));
+                            let _ = fs::copy(sub_bin.join("ffprobe.exe"), bin_dir.join("ffprobe.exe"));
+                        }
+                    }
+                }
+            }
+        }
+
         let _ = fs::remove_dir_all(&temp_dir);
-        info!("ffmpeg extracted to {:?}", bin_dir);
+
+        if !ffmpeg_path.exists() {
+            return Err("Failed to extract ffmpeg.exe from downloaded archive".to_string());
+        }
+
+        info!("ffmpeg extracted successfully to {:?}", bin_dir);
     }
 
     // 3. Download, verify, & extract Deno
@@ -532,21 +574,18 @@ pub fn open_extension_helper() {
         let ps_cmd = format!("Set-Clipboard -Value '{}'", escaped_path);
         let mut clip = std::process::Command::new("powershell");
         clip.creation_flags(CREATE_NO_WINDOW);
-        clip.arg("-NoProfile").arg("-Command").arg(&ps_cmd);
+        clip.arg("-NoProfile").arg("-NonInteractive").arg("-Command").arg(&ps_cmd);
         let _ = clip.output();
 
         // Open extension page in browser
-        let mut browser_cmd = std::process::Command::new("cmd");
-        browser_cmd.creation_flags(CREATE_NO_WINDOW);
-        browser_cmd.arg("/C").arg("start").arg("edge://extensions");
-        let _ = browser_cmd.output();
+        let _ = open::that("edge://extensions").or_else(|_| open::that("chrome://extensions"));
 
         // Open Explorer with manifest.json or folder selected
         let manifest_path = ext_abs_path.join("manifest.json");
         if manifest_path.exists() {
             let mut exp = std::process::Command::new("explorer.exe");
             exp.creation_flags(CREATE_NO_WINDOW);
-            exp.arg(format!("/select,{}", manifest_path.display()));
+            exp.arg(format!("/select,\"{}\"", manifest_path.display()));
             let _ = exp.output();
         } else {
             let _ = open::that(&ext_abs_path);
