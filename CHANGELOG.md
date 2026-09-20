@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.1.1](https://github.com/FunToHard/ytd/compare/v1.1.0...v1.1.1) (2026-09-20)
+
+
+### Bug Fixes
+
+* **concurrency:** release tracker lock before taskkill and prevent PID recycling race ([9038151](https://github.com/FunToHard/ytd/commit/903815114e794b1f37c9ae8f09ebe4bdf896d814))
+* **config:** atomic config file persistence and tray dependency status refresh ([b2d96e1](https://github.com/FunToHard/ytd/commit/b2d96e1fa4d97404e9dd2f2f702a803b45c41efd))
+* **deps:** atomic binary deployment, robust extraction, and safe explorer execution ([0fe8d82](https://github.com/FunToHard/ytd/commit/0fe8d82ba602d72b5a58489f3bf45997bd1e27dd))
+* **downloader:** prevent UTF-8 slicing panic, CPU spin loop, and unsafe partial cleanup ([b6f97bb](https://github.com/FunToHard/ytd/commit/b6f97bbe95abdd69c9cfeb94b5989af0221f6cc9))
+* **extension:** fix progress percentage display, DOM diffing, and storage race conditions ([71e0110](https://github.com/FunToHard/ytd/commit/71e01104c51e3c06bf2a5a89d41dd9208f788944))
+* **security:** enforce Host header validation, tighten body limits, and harden SSRF checks ([5eb7aab](https://github.com/FunToHard/ytd/commit/5eb7aabb9a05af700c836af0ee60aed0566ce756))
+
+
+### Performance Improvements
+
+* **speed:** enable concurrent fragments and configure release profile optimizations ([b625956](https://github.com/FunToHard/ytd/commit/b6259563c04e55f2b0d4df43d8aa145a16b00d67))
+
 ## [1.1.0](https://github.com/FunToHard/ytd/compare/v1.0.11...v1.1.0) (2026-09-19)
 
 
