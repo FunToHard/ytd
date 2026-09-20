@@ -285,6 +285,20 @@ fn kill_process_tree(pid: u32) {
         .output();
 }
 
+fn remove_file_with_retry(path: &Path, max_attempts: usize) -> std::io::Result<()> {
+    for attempt in 0..max_attempts {
+        match std::fs::remove_file(path) {
+            Ok(()) => return Ok(()),
+            Err(e) if attempt + 1 < max_attempts && e.raw_os_error() == Some(32) => {
+                // Windows ERROR_SHARING_VIOLATION: wait briefly for terminating processes to release handles
+                std::thread::sleep(std::time::Duration::from_millis(50 * (attempt as u64 + 1)));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
 fn cleanup_partial_files(dest_dir: &Path, video_id: Option<&str>, title: &str) {
     if let Ok(entries) = std::fs::read_dir(dest_dir) {
         for entry in entries.flatten() {
@@ -292,11 +306,17 @@ fn cleanup_partial_files(dest_dir: &Path, video_id: Option<&str>, title: &str) {
             if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                 if ext == "part" || ext == "ytdl" {
                     let filename = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
-                    let matches_id = video_id.map(|id| filename.contains(id)).unwrap_or(false);
-                    let prefix = if title.len() > 15 { &title[..15] } else { title };
-                    let matches_title = !prefix.is_empty() && filename.starts_with(prefix);
-                    if matches_id || matches_title {
-                        if let Err(e) = std::fs::remove_file(&path) {
+                    let matches = if let Some(id) = video_id {
+                        filename.contains(&format!("[{}]", id)) || filename.contains(id)
+                    } else if !title.is_empty() && !title.starts_with("http://") && !title.starts_with("https://") {
+                        let prefix: String = title.chars().take(15).collect();
+                        prefix.chars().count() >= 3 && filename.starts_with(&prefix)
+                    } else {
+                        false
+                    };
+
+                    if matches {
+                        if let Err(e) = remove_file_with_retry(&path, 3) {
                             warn!("Failed to delete residual partial file {:?}: {}", path, e);
                         } else {
                             info!("Cleaned up cancelled partial file: {:?}", path);
@@ -475,6 +495,7 @@ impl Downloader {
 
         // Basic settings: output newlines for real-time progress parsing
         cmd.arg("--no-simulate")
+            .arg("--no-colors")
             .arg("--windows-filenames")
             .arg("--no-mtime")
             .arg("--newline")
@@ -487,7 +508,7 @@ impl Downloader {
             .arg("--output")
             .arg("%(title)s [%(id)s].%(ext)s")
             .arg("--print")
-            .arg("title");
+            .arg("ytd_title:%(title)s");
 
         if !is_playlist {
             cmd.arg("--no-playlist");
@@ -534,6 +555,7 @@ impl Downloader {
         let mut captured_title = String::new();
         let mut error_lines = Vec::new();
         let mut was_cancelled = false;
+        let mut stderr_eof = false;
 
         loop {
             tokio::select! {
@@ -551,7 +573,13 @@ impl Downloader {
                     match line {
                         Ok(Some(l)) => {
                             let trimmed = l.trim();
-                            if captured_title.is_empty() && !trimmed.is_empty() && !trimmed.starts_with('[') {
+                            if let Some(clean_title) = trimmed.strip_prefix("ytd_title:") {
+                                let clean = clean_title.trim();
+                                if !clean.is_empty() {
+                                    captured_title = clean.to_string();
+                                    get_tracker().update_task_title(task_id, captured_title.clone());
+                                }
+                            } else if captured_title.is_empty() && !trimmed.is_empty() && !trimmed.starts_with('[') && !trimmed.starts_with("download:") {
                                 captured_title = trimmed.to_string();
                                 get_tracker().update_task_title(task_id, captured_title.clone());
                             } else if let Some(pct) = parse_progress(trimmed) {
@@ -559,7 +587,7 @@ impl Downloader {
                             } else if trimmed.contains("[ExtractAudio]") || trimmed.contains("[ffmpeg]") || trimmed.contains("[Merger]") {
                                 get_tracker().update_task_status(task_id, DownloadStatus::Converting);
                             }
-                            info!("[yt-dlp stdout] {}", l);
+                            tracing::debug!("[yt-dlp stdout] {}", l);
                         }
                         Ok(None) => break,
                         Err(e) => {
@@ -568,14 +596,27 @@ impl Downloader {
                         }
                     }
                 }
-                err_line = stderr_reader.next_line() => {
-                    if let Ok(Some(l)) = err_line {
-                        info!("[yt-dlp stderr] {}", l);
-                        if l.contains("ERROR:") {
-                            error_lines.push(l);
+                err_line = stderr_reader.next_line(), if !stderr_eof => {
+                    match err_line {
+                        Ok(Some(l)) => {
+                            tracing::debug!("[yt-dlp stderr] {}", l);
+                            if l.contains("ERROR:") {
+                                error_lines.push(l);
+                            }
+                        }
+                        Ok(None) | Err(_) => {
+                            stderr_eof = true;
                         }
                     }
                 }
+            }
+        }
+
+        // Drain any remaining stderr output after stdout closes
+        while let Ok(Some(l)) = stderr_reader.next_line().await {
+            tracing::debug!("[yt-dlp stderr trailing] {}", l);
+            if l.contains("ERROR:") {
+                error_lines.push(l);
             }
         }
 
@@ -747,5 +788,37 @@ mod tests {
 
         assert!(!resolve_is_playlist(&req_single, true));
         assert!(!resolve_is_playlist(&req_single, false));
+    }
+
+    #[test]
+    fn test_cleanup_partial_files_unicode_and_isolation() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ytd_cleanup_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        // File 1: Sibling with same 15-character prefix "The Daily Show "
+        let sibling_part = temp_dir.join("The Daily Show #01 [sibling123].mp4.part");
+        let _ = std::fs::write(&sibling_part, b"sibling part content");
+
+        // File 2: Target download with Japanese / multi-byte title crossing byte 15
+        let target_part = temp_dir.join("日本語のテスト動画です [target456].mp4.part");
+        let _ = std::fs::write(&target_part, b"target part content");
+
+        // Cancel target download: should cleanly remove target_part without panicking on multi-byte chars
+        cleanup_partial_files(
+            &temp_dir,
+            Some("target456"),
+            "日本語のテスト動画です",
+        );
+
+        assert!(!target_part.exists(), "Target partial file must be deleted");
+        assert!(sibling_part.exists(), "Sibling partial file must be preserved");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
